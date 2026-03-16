@@ -3,22 +3,19 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>FieldOps — 출장 안전 관리</title>
+<title>BEAN — 출장자 전용 앱</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
 <script type="module">
-import { initializeApp }       from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js';
+import { initializeApp }  from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, onAuthStateChanged }
-                               from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-auth.js';
-import { getFirestore, collection, addDoc, deleteDoc, doc, setDoc, onSnapshot, serverTimestamp, query, orderBy }
-                               from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js';
+                          from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-auth.js';
+import { getFirestore, collection, addDoc, deleteDoc, doc, setDoc, getDoc,
+         onSnapshot, serverTimestamp, query, orderBy, where, getDocs, Timestamp }
+                          from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL }
-                               from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-storage.js';
+                          from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-storage.js';
 
-/* ┌──────────────────────────────────────────────────────────────┐
-   │  ★ 여기에 Firebase 콘솔에서 복사한 값을 붙여넣으세요 ★      │
-   │  Firebase Console → 프로젝트 설정 → 내 앱 → firebaseConfig  │
-   └──────────────────────────────────────────────────────────────┘ */
 const firebaseConfig = {
   apiKey:            "AIzaSyDZ6I5Pia-4-FSakgUzCEQzB1hQShdxNsM",
   authDomain:        "ivebeanthere-3a913.firebaseapp.com",
@@ -28,233 +25,340 @@ const firebaseConfig = {
   appId:             "1:609666986142:web:cbe724307611f77a74cb8f"
 };
 
-const app      = initializeApp(firebaseConfig);
-const auth     = getAuth(app);
-const db       = getFirestore(app);
-const storage  = getStorage(app);
+const app     = initializeApp(firebaseConfig);
+const auth    = getAuth(app);
+const db      = getFirestore(app);
+const storage = getStorage(app);
 const provider = new GoogleAuthProvider();
-// 개인 Google 계정 허용 중. 회사 계정만 허용하려면 아래 줄 주석 해제:
-// provider.setCustomParameters({ hd: 'your-company.com' });
 
 // ── 로그인 상태 감지 ────────────────────────────────────────
-onAuthStateChanged(auth, user => {
+onAuthStateChanged(auth, async user => {
   if (user) {
     window._currentUser = user;
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
-    const av = document.getElementById('user-avatar');
-    if (user.photoURL) av.innerHTML = `<img src="${user.photoURL}"/>`;
-    else av.textContent = (user.displayName||'?').slice(0,2);
-    document.getElementById('user-name').textContent = user.displayName || user.email;
-    startListeners();
-    if (window._mapsApiLoaded) window.initMap();
+    const pSnap = await getDoc(doc(db,'profiles', user.uid));
+    if (pSnap.exists()) {
+      window._profile = pSnap.data();
+      showApp(user);
+    } else {
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('profile-setup').style.display = 'flex';
+      document.getElementById('ps-name').value = user.displayName || '';
+    }
   } else {
-    window._currentUser = null;
+    window._currentUser = null; window._profile = null;
     document.getElementById('app').style.display = 'none';
+    document.getElementById('profile-setup').style.display = 'none';
     document.getElementById('login-screen').style.display = 'flex';
   }
 });
 
-// ── 버튼 이벤트 연결 (module 안에서만 Firebase에 접근 가능) ──
+function showApp(user) {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('profile-setup').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  const av = document.getElementById('user-avatar');
+  if (user.photoURL) av.innerHTML = `<img src="${user.photoURL}"/>`;
+  else av.textContent = (window._profile?.name || user.displayName||'?').slice(0,2);
+  document.getElementById('user-name').textContent = window._profile?.name || user.displayName || user.email;
+  document.getElementById('user-meta').textContent =
+    [window._profile?.team, window._profile?.role].filter(Boolean).join(' · ');
+  startListeners();
+  loadMyTrip();
+  if (window._mapsApiLoaded) window.initMap();
+}
+
+// ── 버튼 연결 ───────────────────────────────────────────────
 document.getElementById('btn-google-login')
   .addEventListener('click', async () => {
     try { await signInWithPopup(auth, provider); }
     catch(e) { alert('로그인 실패: ' + e.message); }
   });
-document.getElementById('btn-signout')
-  .addEventListener('click', () => fbSignOut(auth));
+document.getElementById('btn-signout').addEventListener('click', () => fbSignOut(auth));
 
-// ── Firestore 실시간 동기화 ─────────────────────────────────
+// ── 프로필 저장 ─────────────────────────────────────────────
+window.saveProfile = async () => {
+  const name = document.getElementById('ps-name').value.trim();
+  if (!name) { showToast('이름을 입력해주세요'); return; }
+  const profile = {
+    name, team: document.getElementById('ps-team').value.trim(),
+    role: document.getElementById('ps-role').value.trim(),
+    email: window._currentUser.email, uid: window._currentUser.uid,
+    ts: serverTimestamp()
+  };
+  await setDoc(doc(db,'profiles', window._currentUser.uid), profile);
+  window._profile = profile;
+  showApp(window._currentUser);
+  showToast('✓ 프로필 저장 완료');
+};
+
+// ── 출장 정보 저장/불러오기 ─────────────────────────────────
+window.saveTrip = async () => {
+  const country = document.getElementById('trip-country').value;
+  const region  = document.getElementById('trip-region').value.trim();
+  const start   = document.getElementById('trip-start').value;
+  const end     = document.getElementById('trip-end').value;
+  if (!country || !start || !end) { showToast('국가·출발일·귀국일은 필수입니다'); return; }
+  if (start > end) { showToast('귀국일이 출발일보다 빠를 수 없습니다'); return; }
+  const trip = { uid: window._currentUser.uid,
+    name: window._profile?.name || window._currentUser.displayName,
+    country, region, start, end, ts: serverTimestamp() };
+  await setDoc(doc(db,'trips', window._currentUser.uid), trip);
+  window._myTrip = trip;
+  closeModal('modal-trip');
+  renderTripBanner();
+  showToast('✓ 출장 정보 저장됨');
+};
+
+async function loadMyTrip() {
+  const snap = await getDoc(doc(db,'trips', window._currentUser.uid));
+  if (snap.exists()) { window._myTrip = snap.data(); renderTripBanner(); }
+}
+
+function renderTripBanner() {
+  const t = window._myTrip; if (!t) return;
+  const today = new Date().toISOString().slice(0,10);
+  const active = today >= t.start && today <= t.end;
+  const bar = document.getElementById('trip-banner');
+  bar.style.display = 'flex';
+  document.getElementById('trip-info').textContent =
+    `${t.country}${t.region?' · '+t.region:''} · ${t.start} ~ ${t.end}`;
+  document.getElementById('trip-badge').innerHTML = active
+    ? `<span class="badge b-green"><span class="bdot"></span>출장 중</span>`
+    : `<span class="badge b-muted"><span class="bdot"></span>출장 외</span>`;
+  // 체크인 버튼
+  const btn = document.getElementById('btn-checkin-main');
+  btn.disabled = !active;
+  btn.title = active ? '' : '출장 기간 외에는 체크인할 수 없습니다';
+  // 위치 입력란에 국가/지역 힌트
+  document.getElementById('my-loc').placeholder = `예: ${t.region||t.country} 현장`;
+}
+
+// ── GPS 위치 불러오기 ────────────────────────────────────────
+window.getGPS = (latId, lngId, labelId) => {
+  const btn = document.getElementById('btn-gps-'+(latId||'ci'));
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+  if (!navigator.geolocation) { showToast('이 브라우저는 GPS를 지원하지 않습니다'); return; }
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const lat = pos.coords.latitude.toFixed(6);
+      const lng = pos.coords.longitude.toFixed(6);
+      if (latId) { document.getElementById(latId).value = lat; document.getElementById(lngId).value = lng; }
+      if (labelId) document.getElementById(labelId).value = `${lat}, ${lng}`;
+      // 역지오코딩 (Maps API 없을 때는 좌표만 표시)
+      if (window.google?.maps?.Geocoder) {
+        new google.maps.Geocoder().geocode({location:{lat:parseFloat(lat),lng:parseFloat(lng)}}, (res,st) => {
+          if (st==='OK' && res[0]) {
+            const addr = res[0].formatted_address;
+            if (labelId) document.getElementById(labelId).value = addr;
+          }
+        });
+      }
+      if (btn) { btn.textContent = '✓'; btn.disabled = false; }
+      showToast(`📍 GPS 위치 불러옴 (${lat}, ${lng})`);
+    },
+    err => {
+      if (btn) { btn.textContent = '📍'; btn.disabled = false; }
+      showToast('GPS 실패: 브라우저 위치 권한을 허용해주세요');
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+};
+
+// ── 체크인 (출장 기간 내, 하루 1회) ─────────────────────────
+window.doCheckin = async () => {
+  const trip = window._myTrip;
+  if (!trip) { showToast('먼저 출장 정보를 등록해주세요'); openModal('modal-trip'); return; }
+  const today = new Date().toISOString().slice(0,10);
+  if (today < trip.start || today > trip.end) { showToast('출장 기간 외에는 체크인할 수 없습니다'); return; }
+  const user = window._currentUser;
+  // 오늘 이미 체크인했는지 확인
+  const dayStart = Timestamp.fromDate(new Date(today+'T00:00:00'));
+  const dayEnd   = Timestamp.fromDate(new Date(today+'T23:59:59'));
+  const already  = await getDocs(query(collection(db,'checkins'),
+    where('uid','==',user.uid), where('ts','>=',dayStart), where('ts','<=',dayEnd)));
+  if (!already.empty) { showToast('오늘은 이미 체크인 완료입니다 ✓'); return; }
+  const loc   = document.getElementById('my-loc').value.trim();
+  const hotel = document.getElementById('my-hotel').value.trim();
+  const note  = document.getElementById('my-note').value.trim();
+  const lat   = parseFloat(document.getElementById('ci-lat').value)||null;
+  const lng   = parseFloat(document.getElementById('ci-lng').value)||null;
+  if (!loc) { showToast('현재 위치를 입력해주세요'); return; }
+  await addDoc(collection(db,'checkins'), {
+    uid: user.uid, name: window._profile?.name||user.displayName,
+    team: window._profile?.team||'', role: window._profile?.role||'',
+    email: user.email, loc, hotel, note, lat, lng,
+    country: trip.country, region: trip.region, ts: serverTimestamp()
+  });
+  await setDoc(doc(db,'team_status', user.uid), {
+    name: window._profile?.name||user.displayName,
+    team: window._profile?.team||'', role: window._profile?.role||'',
+    email: user.email, photoURL: user.photoURL||null,
+    loc, lat, lng, country: trip.country, region: trip.region,
+    status:'safe', ts: serverTimestamp()
+  });
+  document.getElementById('my-note').value = '';
+  document.getElementById('ci-lat').value = '';
+  document.getElementById('ci-lng').value = '';
+  document.querySelector('.prog-fill').style.width = '99%';
+  document.getElementById('next-timer').textContent = '내일 체크인 가능';
+  showToast('✓ 체크인 완료! 오늘 체크인은 완료됐습니다');
+};
+
+// ── Firestore 실시간 리스너 ─────────────────────────────────
 function startListeners() {
-  // 내 체크인 기록
-  onSnapshot(query(collection(db,'checkins'), orderBy('ts','desc')), snap => {
+  const user = window._currentUser;
+  onSnapshot(query(collection(db,'checkins'), where('uid','==',user.uid), orderBy('ts','desc')), snap => {
     const hist = document.getElementById('checkin-history');
-    hist.innerHTML = '';
-    snap.docs.slice(0,6).forEach(d => {
-      const r = d.data();
-      const li = document.createElement('li');
-      li.className = 'ok';
+    hist.innerHTML = snap.empty
+      ? '<li style="color:var(--muted);font-size:12.5px;list-style:none;padding:4px 0">체크인 후 기록이 표시됩니다</li>'
+      : '';
+    snap.docs.slice(0,8).forEach(d => {
+      const r = d.data(); const li = document.createElement('li'); li.className='ok';
       const t = r.ts?.toDate
         ? r.ts.toDate().toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
         : '방금';
       li.innerHTML = `<div class="tl-t">${t}</div>
-        <div class="tl-m">체크인 완료 · ${r.loc}${r.hotel?' · '+r.hotel:''}${r.note?' — '+r.note:''}</div>`;
+        <div class="tl-m">✓ ${r.loc}${r.hotel?' · '+r.hotel:''}${r.note?' — '+r.note:''}</div>`;
       hist.appendChild(li);
     });
   });
-
-  // 현지 장소 목록
   onSnapshot(query(collection(db,'places'), orderBy('ts','desc')), snap => {
-    window._places = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    filterPlaces();
-    if (window.map) refreshMapPins();
+    window._places = snap.docs.map(d=>({id:d.id,...d.data()}));
+    filterPlaces(); if (window.map) refreshMapPins();
   });
-
-  // 영수증 목록
-  onSnapshot(query(collection(db,'receipts'), orderBy('ts','desc')), snap => {
-    window._receipts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  onSnapshot(query(collection(db,'receipts'), where('uid','==',user.uid), orderBy('ts','desc')), snap => {
+    window._receipts = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderReceipts();
   });
-
-  // 팀 현황
   onSnapshot(collection(db,'team_status'), snap => {
     window._teamStatus = {};
-    snap.docs.forEach(d => { window._teamStatus[d.id] = d.data(); });
+    snap.docs.forEach(d=>{ window._teamStatus[d.id]=d.data(); });
     renderTeamStatus();
   });
 }
-
-// ── 체크인 저장 ─────────────────────────────────────────────
-window.doCheckin = async () => {
-  const loc = document.getElementById('my-loc').value.trim();
-  if (!loc) { showToast('위치를 입력해주세요'); return; }
-  const user = window._currentUser;
-  await addDoc(collection(db,'checkins'), {
-    uid: user.uid, name: user.displayName, email: user.email,
-    loc,
-    hotel: document.getElementById('my-hotel').value.trim(),
-    note:  document.getElementById('my-note').value.trim(),
-    ts: serverTimestamp()
-  });
-  await setDoc(doc(db,'team_status', user.uid), {
-    name: user.displayName, email: user.email,
-    photoURL: user.photoURL||null,
-    loc, status:'safe', ts: serverTimestamp()
-  });
-  document.getElementById('my-note').value = '';
-  document.querySelector('.prog-fill').style.width = '3%';
-  document.getElementById('next-timer').textContent = '11시간 57분';
-  showToast('✓ 체크인 완료! 팀 현황에 반영됩니다');
-};
 
 // ── 장소 저장 ───────────────────────────────────────────────
 window.savePlace = async () => {
   const name = document.getElementById('p-name').value.trim();
   const city = document.getElementById('p-city').value.trim();
-  if (!name || !city) { showToast('장소명과 도시는 필수입니다'); return; }
-  const photoURLs = [];
+  if (!name||!city) { showToast('장소명과 도시는 필수입니다'); return; }
+  const photoURLs=[];
   for (const file of (window._placePhotoFiles||[])) {
-    const snap = await uploadBytes(storageRef(storage,`places/${Date.now()}_${file.name}`), file);
-    photoURLs.push(await getDownloadURL(snap.ref));
+    const s = await uploadBytes(storageRef(storage,`places/${Date.now()}_${file.name}`),file);
+    photoURLs.push(await getDownloadURL(s.ref));
   }
+  const lat = parseFloat(document.getElementById('p-lat').value)||null;
+  const lng = parseFloat(document.getElementById('p-lng').value)||null;
   await addDoc(collection(db,'places'), {
-    name, city,
-    cat:    document.getElementById('p-cat').value,
+    name, city, cat: document.getElementById('p-cat').value,
     rating: parseInt(document.getElementById('p-rating').value),
-    lat:    parseFloat(document.getElementById('p-lat').value)||null,
-    lng:    parseFloat(document.getElementById('p-lng').value)||null,
-    addr:   document.getElementById('p-addr').value.trim(),
-    notes:  document.getElementById('p-notes').value.trim(),
-    tags:   document.getElementById('p-tags').value.split(',').map(t=>t.trim()).filter(Boolean),
-    by:     window._currentUser?.displayName||'익명',
-    photos: photoURLs,
-    ts:     serverTimestamp()
+    lat, lng, addr: document.getElementById('p-addr').value.trim(),
+    notes: document.getElementById('p-notes').value.trim(),
+    tags: document.getElementById('p-tags').value.split(',').map(t=>t.trim()).filter(Boolean),
+    by: window._profile?.name||window._currentUser?.displayName||'익명',
+    photos: photoURLs, ts: serverTimestamp()
   });
-  ['p-name','p-city','p-addr','p-notes','p-tags','p-lat','p-lng']
-    .forEach(id => document.getElementById(id).value='');
-  window._placePhotoFiles = [];
-  document.getElementById('place-photos-preview').innerHTML =
-    '<div class="photo-placeholder" onclick="triggerPlacePhoto()">+</div>';
+  ['p-name','p-city','p-addr','p-notes','p-tags','p-lat','p-lng'].forEach(id=>document.getElementById(id).value='');
+  window._placePhotoFiles=[];
+  document.getElementById('place-photos-preview').innerHTML='<div class="photo-placeholder" onclick="triggerPlacePhoto()">+</div>';
   closeModal('modal-place');
   showToast(`📍 "${name}" 저장 완료`);
 };
 window.delPlace = async id => { await deleteDoc(doc(db,'places',id)); showToast('삭제됨'); };
 
-// ── 영수증 저장 (사진 먼저 Storage에 저장, 이후 수동 입력) ──
+// ── 영수증 저장 ─────────────────────────────────────────────
 window.saveReceipt = async () => {
-  const shop   = document.getElementById('r-shop').value.trim();
-  const amount = parseFloat(document.getElementById('r-amount').value);
-  if (!shop || isNaN(amount)) { showToast('상호명과 금액은 필수입니다'); return; }
-  let photoURL = null;
+  const shop=document.getElementById('r-shop').value.trim();
+  const amount=parseFloat(document.getElementById('r-amount').value);
+  if (!shop||isNaN(amount)) { showToast('상호명과 금액은 필수입니다'); return; }
+  let photoURL=null;
   if (window._pendingReceiptFile) {
-    const path = `receipts/${window._currentUser?.uid||'anon'}/${Date.now()}_${window._pendingReceiptFile.name}`;
-    const snap = await uploadBytes(storageRef(storage, path), window._pendingReceiptFile);
-    photoURL = await getDownloadURL(snap.ref);
+    const path=`receipts/${window._currentUser?.uid||'anon'}/${Date.now()}_${window._pendingReceiptFile.name}`;
+    const s=await uploadBytes(storageRef(storage,path),window._pendingReceiptFile);
+    photoURL=await getDownloadURL(s.ref);
   }
-  await addDoc(collection(db,'receipts'), {
-    shop, amount,
-    cat:      document.getElementById('r-cat').value,
-    currency: document.getElementById('r-currency').value,
-    date:     document.getElementById('r-date').value || new Date().toISOString().slice(0,10),
-    photoURL,
-    // 사진이 있으면 HR 검토 대기, 없으면 수동 입력
-    scanStatus: photoURL ? 'pending_review' : 'manual',
-    uid: window._currentUser?.uid,
-    by:  window._currentUser?.displayName,
-    ts:  serverTimestamp()
+  await addDoc(collection(db,'receipts'),{
+    shop, amount, cat:document.getElementById('r-cat').value,
+    currency:document.getElementById('r-currency').value,
+    date:document.getElementById('r-date').value||new Date().toISOString().slice(0,10),
+    photoURL, scanStatus:photoURL?'pending_review':'manual',
+    uid:window._currentUser?.uid, by:window._profile?.name||window._currentUser?.displayName,
+    ts:serverTimestamp()
   });
-  window._pendingReceiptFile = null;
-  document.getElementById('receipt-photo-preview').style.display = 'none';
-  document.getElementById('receipt-upload-status').textContent = '';
-  document.getElementById('receipt-drop-ico').textContent = '📷';
+  window._pendingReceiptFile=null;
+  document.getElementById('receipt-photo-preview').style.display='none';
+  document.getElementById('receipt-upload-status').textContent='';
+  document.getElementById('receipt-drop-ico').textContent='📷';
   closeModal('modal-receipt');
-  showToast('🧾 영수증 저장됨 · 원본 사진 HR 검토용 보관');
+  showToast('🧾 영수증 저장됨');
 };
 window.delReceipt = async id => { await deleteDoc(doc(db,'receipts',id)); showToast('삭제됨'); };
-
-// ── 영수증 사진 선택 (저장은 saveReceipt 호출 시 업로드) ────
 window.processReceiptPhoto = file => {
-  window._pendingReceiptFile = file;
-  document.getElementById('receipt-preview-img').src = URL.createObjectURL(file);
-  document.getElementById('receipt-photo-preview').style.display = 'block';
-  document.getElementById('receipt-upload-status').textContent = '✓ 선택됨 — 저장 시 서버에 업로드됩니다';
-  document.getElementById('receipt-drop-ico').textContent = '✅';
+  window._pendingReceiptFile=file;
+  document.getElementById('receipt-preview-img').src=URL.createObjectURL(file);
+  document.getElementById('receipt-photo-preview').style.display='block';
+  document.getElementById('receipt-upload-status').textContent='✓ 선택됨 — 저장 시 서버에 업로드됩니다';
+  document.getElementById('receipt-drop-ico').textContent='✅';
 };
 </script>
 
 <style>
 :root {
-  /* ── 색상 커스터마이징 ─────────────────────────────────────
-     포인트 색 변경: --accent 값을 교체하면 전체 반영됩니다.
-     예) 파란색→초록색: --accent:#16a34a; --accent-h:#15803d;
-  ──────────────────────────────────────────────────────────── */
-  --bg:#f6f8fa;  --bg2:#ffffff; --bg3:#f0f2f5; --bg4:#e8eaed;
+  --bg:#f6f8fa; --bg2:#ffffff; --bg3:#f0f2f5; --bg4:#e8eaed;
   --border:rgba(0,0,0,0.08); --border2:rgba(0,0,0,0.15);
   --text:#1f2328; --muted:#636c76; --muted2:#9a9ea6;
   --accent:#2f81f7; --accent-h:#1a6fdc;
-  --green:#1a7f37; --amber:#9a6700; --red:#d1242f; --teal:#0969da; --purple:#6e40c9;
-  --r:10px; --r-sm:6px;
-  --font:'Noto Sans KR',sans-serif;
+  --green:#1a7f37; --amber:#9a6700; --red:#d1242f; --teal:#0969da;
+  --r:10px; --r-sm:6px; --font:'Noto Sans KR',sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;line-height:1.6;}
+/* topbar */
 .topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;}
 .logo{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:700;letter-spacing:-.4px;}
 .logo-mark{width:30px;height:30px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:15px;}
 .topbar-right{display:flex;align-items:center;gap:10px;}
+.user-pill{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);}
+.user-info{display:flex;flex-direction:column;align-items:flex-end;}
+.avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#2f81f7,#bc8cff);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;overflow:hidden;border:1.5px solid var(--border2);}
+.avatar img{width:100%;height:100%;object-fit:cover;}
 .lang-toggle{display:flex;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;overflow:hidden;}
 .lang-btn{padding:4px 11px;font-size:11px;font-family:var(--font);cursor:pointer;border:none;background:transparent;color:var(--muted);transition:all .15s;}
 .lang-btn.active{background:var(--accent);color:#fff;}
-.user-pill{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);}
-.avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#2f81f7,#bc8cff);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;overflow:hidden;border:1.5px solid var(--border2);}
-.avatar img{width:100%;height:100%;object-fit:cover;}
-#login-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999;flex-direction:column;gap:24px;}
-.login-card{background:var(--bg2);border:1px solid var(--border2);border-radius:16px;padding:40px 48px;text-align:center;max-width:380px;width:100%;}
-.login-logo{font-size:40px;margin-bottom:12px;}
-.login-title{font-size:22px;font-weight:700;margin-bottom:4px;}
-.login-sub{font-size:13px;color:var(--muted);margin-bottom:28px;}
-.google-btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 20px;background:#fff;color:#3c4043;border:1px solid #dadce0;border-radius:8px;font-family:var(--font);font-size:14px;font-weight:500;cursor:pointer;transition:background .15s;}
+/* full-screen overlays */
+#login-screen,#profile-setup{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999;flex-direction:column;gap:24px;}
+.auth-card{background:var(--bg2);border:1px solid var(--border2);border-radius:16px;padding:36px 44px;max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);}
+.auth-logo{font-size:36px;margin-bottom:10px;text-align:center;}
+.auth-title{font-size:20px;font-weight:700;margin-bottom:4px;text-align:center;}
+.auth-sub{font-size:13px;color:var(--muted);margin-bottom:24px;text-align:center;}
+.google-btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:11px 20px;background:#fff;color:#3c4043;border:1px solid #dadce0;border-radius:8px;font-family:var(--font);font-size:14px;font-weight:500;cursor:pointer;transition:background .15s;}
 .google-btn:hover{background:#f8f9fa;}
+/* tabs */
 .tabbar{background:var(--bg2);border-bottom:1px solid var(--border);display:flex;padding:0 20px;gap:2px;overflow-x:auto;}
 .tab{padding:0 14px;height:46px;display:flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;flex-shrink:0;}
 .tab:hover{color:var(--text);}
 .tab.active{color:var(--text);border-bottom-color:var(--accent);}
+/* pages */
 .page{display:none;padding:20px;max-width:940px;margin:0 auto;}
 .page.active{display:block;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
 @media(max-width:620px){.grid2,.grid3{grid-template-columns:1fr;}}
+/* cards */
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:12px;}
 .card-title{font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;}
 .stat{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r-sm);padding:14px 16px;}
 .stat-val{font-size:26px;font-weight:700;color:var(--text);font-family:'DM Mono',monospace;line-height:1;}
 .stat-lbl{font-size:11.5px;color:var(--muted);margin-top:4px;}
+/* badges */
 .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:11.5px;font-weight:500;}
 .b-green{background:rgba(26,127,55,.1);color:var(--green);}
 .b-amber{background:rgba(154,103,0,.1);color:var(--amber);}
 .b-red{background:rgba(209,36,47,.1);color:var(--red);}
 .b-blue{background:rgba(47,129,247,.1);color:var(--accent);}
+.b-muted{background:var(--bg3);color:var(--muted);}
 .bdot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0;}
+/* buttons */
 .btn{padding:8px 16px;border-radius:var(--r-sm);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;border:1px solid transparent;display:inline-flex;align-items:center;gap:6px;transition:all .15s;white-space:nowrap;}
 .btn-primary{background:var(--accent);color:#fff;}
 .btn-primary:hover{background:var(--accent-h);}
@@ -262,17 +366,23 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .btn-secondary:hover{background:var(--bg4);}
 .btn-success{background:rgba(26,127,55,.1);color:var(--green);border-color:rgba(26,127,55,.25);}
 .btn-success:hover{background:rgba(26,127,55,.2);}
+.btn-gps{padding:7px 12px;border-radius:var(--r-sm);font-family:var(--font);font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--border2);background:var(--bg3);color:var(--accent);white-space:nowrap;transition:all .15s;flex-shrink:0;}
+.btn-gps:hover{background:rgba(47,129,247,.08);}
 .btn-sm{padding:5px 11px;font-size:12px;}
 .btn-xs{padding:3px 8px;font-size:11px;}
 .btn:disabled{opacity:.4;cursor:not-allowed;}
+/* inputs */
 .field{margin-bottom:12px;}
 .label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:5px;}
+.input-row{display:flex;gap:8px;align-items:stretch;}
+.input-row input{flex:1;}
 input[type=text],input[type=number],input[type=time],input[type=date],select,textarea{
   width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r-sm);
   color:var(--text);font-family:var(--font);font-size:13px;padding:8px 12px;outline:none;transition:border-color .15s;}
 input:focus,select:focus,textarea:focus{border-color:var(--accent);}
 select option{background:var(--bg2);}
 textarea{resize:vertical;min-height:72px;}
+/* team rows */
 .emp-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);}
 .emp-row:last-child{border-bottom:none;}
 .emp-l{display:flex;align-items:center;gap:10px;}
@@ -281,16 +391,18 @@ textarea{resize:vertical;min-height:72px;}
 .emp-name{font-size:13.5px;font-weight:500;}
 .emp-meta{font-size:11.5px;color:var(--muted);margin-top:2px;}
 .emp-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
+/* timeline */
 .tl{list-style:none;padding-left:22px;position:relative;}
 .tl::before{content:'';position:absolute;left:5px;top:8px;bottom:8px;width:1px;background:var(--border2);}
 .tl li{position:relative;margin-bottom:14px;}
 .tl li::before{content:'';position:absolute;left:-17px;top:5px;width:9px;height:9px;border-radius:50%;background:var(--bg3);border:2px solid var(--border2);}
 .tl li.ok::before{background:var(--green);border-color:var(--green);}
-.tl li.warn::before{background:var(--amber);border-color:var(--amber);}
 .tl-t{font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;}
 .tl-m{font-size:13px;color:var(--text);margin-top:2px;}
+/* map */
 #map{width:100%;height:360px;border-radius:var(--r);border:1px solid var(--border);overflow:hidden;}
 .map-placeholder{height:360px;background:var(--bg3);border-radius:var(--r);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--muted);font-size:13px;text-align:center;padding:20px;}
+/* place cards */
 .place-wrap{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r-sm);padding:14px;margin-bottom:10px;transition:border-color .15s;}
 .place-wrap:hover{border-color:var(--border2);}
 .place-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
@@ -299,13 +411,14 @@ textarea{resize:vertical;min-height:72px;}
 .place-note{font-size:12.5px;color:var(--muted);border-left:2px solid var(--border2);padding-left:10px;margin-top:8px;line-height:1.55;}
 .place-photos{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
 .place-photo{width:72px;height:72px;border-radius:6px;object-fit:cover;border:1px solid var(--border);cursor:pointer;}
-.photo-placeholder{width:72px;height:72px;border-radius:6px;border:1px dashed var(--border2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;color:var(--muted);transition:border-color .15s;}
+.photo-placeholder{width:72px;height:72px;border-radius:6px;border:1px dashed var(--border2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;color:var(--muted);}
 .photo-placeholder:hover{border-color:var(--accent);}
 .tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;}
 .tag{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:2px 9px;font-size:11px;color:var(--muted);}
 .stars{color:var(--amber);font-size:12px;}
 .maps-link{font-size:11.5px;color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;gap:4px;margin-top:6px;}
 .maps-link:hover{text-decoration:underline;}
+/* receipts */
 .rtable{width:100%;border-collapse:collapse;font-size:13px;}
 .rtable th{text-align:left;color:var(--muted);font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.6px;padding:8px 10px;border-bottom:1px solid var(--border);}
 .rtable td{padding:10px;border-bottom:1px solid var(--border);vertical-align:middle;}
@@ -314,14 +427,17 @@ textarea{resize:vertical;min-height:72px;}
 .mono{font-family:'DM Mono',monospace;}
 .receipt-thumb{width:44px;height:44px;border-radius:4px;object-fit:cover;border:1px solid var(--border);cursor:pointer;}
 .thumb-placeholder{width:44px;height:44px;border-radius:4px;background:var(--bg4);border:1px dashed var(--border2);display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--muted2);}
+/* dropzone */
 .dropzone{border:2px dashed var(--border2);border-radius:var(--r);padding:26px 20px;text-align:center;cursor:pointer;transition:all .15s;}
 .dropzone:hover,.dropzone.drag{border-color:var(--accent);background:rgba(47,129,247,.04);}
 .drop-ico{font-size:28px;margin-bottom:8px;}
-.hr-note{background:#fff8e1;border:1px solid #ffe082;border-radius:var(--r-sm);padding:10px 14px;font-size:12px;color:#7a5900;margin-top:10px;display:flex;gap:8px;align-items:flex-start;}
+/* progress */
 .prog-bar{height:4px;background:var(--bg4);border-radius:4px;overflow:hidden;margin-top:6px;}
-.prog-fill{height:100%;background:var(--accent);border-radius:4px;transition:width .4s;}
+.prog-fill{height:100%;background:var(--accent);border-radius:4px;transition:width .6s;}
+/* SOS */
 .sos{width:100%;padding:16px;border-radius:var(--r);background:rgba(209,36,47,.06);border:2px solid rgba(209,36,47,.25);color:var(--red);font-family:var(--font);font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.5px;transition:all .15s;margin-top:4px;}
 .sos:hover{background:rgba(209,36,47,.12);border-color:var(--red);}
+/* modals */
 .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;align-items:center;justify-content:center;padding:16px;}
 .overlay.open{display:flex;}
 .modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);padding:20px;width:520px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.12);}
@@ -329,30 +445,35 @@ textarea{resize:vertical;min-height:72px;}
 .modal-title{font-size:15px;font-weight:700;}
 .modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:2px 6px;}
 .modal-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);}
+/* lightbox */
 #lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:900;align-items:center;justify-content:center;cursor:zoom-out;}
 #lightbox.open{display:flex;}
 #lightbox img{max-width:90vw;max-height:88vh;border-radius:8px;object-fit:contain;}
 #lb-close{position:fixed;top:20px;right:24px;color:#fff;font-size:28px;cursor:pointer;background:none;border:none;}
+/* trip banner */
+#trip-banner{display:none;background:rgba(47,129,247,.06);border:1px solid rgba(47,129,247,.2);border-radius:var(--r-sm);padding:10px 14px;margin-bottom:12px;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
+/* status bar */
 .status-bar{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+/* toast */
 .toast{position:fixed;bottom:20px;right:20px;background:var(--text);color:var(--bg2);border-radius:var(--r-sm);padding:11px 16px;font-size:13px;z-index:1000;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;max-width:340px;}
 .toast.show{opacity:1;transform:translateY(0);}
+/* misc */
 .sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
 .sec-title{font-size:15px;font-weight:700;}
 .sec-sub{font-size:12px;color:var(--muted);margin-top:2px;}
 .flex{display:flex;}.gap8{gap:8px;}.mt8{margin-top:8px;}.mt12{margin-top:12px;}
 .text-muted{color:var(--muted);font-size:12px;}
-.text-center{text-align:center;}
+.gps-hint{font-size:11px;color:var(--muted2);margin-top:4px;}
 </style>
 </head>
 <body>
 
-<!-- 로그인 화면 -->
+<!-- ══ 로그인 화면 ══ -->
 <div id="login-screen">
-  <div class="login-card">
-    <div class="login-logo">🛡️</div>
-    <div class="login-title">FieldOps</div>
-    <div class="login-sub">Google 계정으로 로그인하세요<br>
-      <span style="font-size:11px;color:var(--muted2)">Sign in with your Google account</span></div>
+  <div class="auth-card">
+    <div class="auth-logo">🛡️</div>
+    <div class="auth-title">FieldOps</div>
+    <div class="auth-sub">출장 안전 관리 · Google 계정으로 로그인하세요</div>
     <button class="google-btn" id="btn-google-login">
       <svg width="18" height="18" viewBox="0 0 48 48">
         <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.7 2.5 30.2 0 24 0 14.7 0 6.7 5.5 2.7 13.5l7.8 6.1C12.5 13.4 17.8 9.5 24 9.5z"/>
@@ -365,15 +486,37 @@ textarea{resize:vertical;min-height:72px;}
   </div>
 </div>
 
-<!-- 메인 앱 -->
+<!-- ══ 프로필 설정 (최초 1회) ══ -->
+<div id="profile-setup" style="display:none">
+  <div class="auth-card">
+    <div class="auth-logo">👤</div>
+    <div class="auth-title">프로필 설정</div>
+    <div class="auth-sub">처음 로그인하셨군요! 간단한 정보를 입력해주세요</div>
+    <div class="field">
+      <label class="label">이름 *</label>
+      <input type="text" id="ps-name" placeholder="예: 홍길동"/>
+    </div>
+    <div class="field">
+      <label class="label">소속 팀</label>
+      <input type="text" id="ps-team" placeholder="예: 현장운영팀"/>
+    </div>
+    <div class="field">
+      <label class="label">직책</label>
+      <input type="text" id="ps-role" placeholder="예: 현장 매니저"/>
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px" onclick="saveProfile()">
+      저장하고 시작하기 →
+    </button>
+  </div>
+</div>
+
+<!-- ══ 메인 앱 ══ -->
 <div id="app" style="display:none">
 
 <div class="topbar">
   <div class="logo">
-    <!-- ↓ 회사명 수정 위치 -->
     <div class="logo-mark">🛡</div>
     FieldOps
-    <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:2px">출장 안전 관리</span>
   </div>
   <div class="topbar-right">
     <div class="lang-toggle">
@@ -381,9 +524,13 @@ textarea{resize:vertical;min-height:72px;}
       <button class="lang-btn" id="btn-en" onclick="setLang('en')">ENG</button>
     </div>
     <div class="user-pill">
+      <div class="user-info">
+        <span id="user-name" style="font-size:12.5px;color:var(--text);font-weight:500"></span>
+        <span id="user-meta" style="font-size:11px;color:var(--muted)"></span>
+      </div>
       <div class="avatar" id="user-avatar">?</div>
-      <span id="user-name"></span>
     </div>
+    <button class="btn btn-secondary btn-sm" onclick="openModal('modal-profile-edit')" title="프로필 수정">✏️</button>
     <button class="btn btn-secondary btn-sm" id="btn-signout">로그아웃</button>
   </div>
 </div>
@@ -391,52 +538,83 @@ textarea{resize:vertical;min-height:72px;}
 <div class="tabbar">
   <div class="tab active" onclick="switchPage('checkin')" id="tab-checkin">🛡️ <span id="t-safety">안전 체크인</span></div>
   <div class="tab" onclick="switchPage('places')" id="tab-places">📍 <span id="t-places">현지 장소</span></div>
-  <div class="tab" onclick="switchPage('receipts')" id="tab-receipts">🧾 <span id="t-receipts">영수증 관리</span></div>
+  <div class="tab" onclick="switchPage('receipts')" id="tab-receipts">🧾 <span id="t-receipts">영수증</span></div>
 </div>
 
 <!-- ══ 페이지 1: 안전 체크인 ══ -->
 <div class="page active" id="page-checkin">
+
+  <!-- 출장 정보 배너 -->
+  <div id="trip-banner">
+    <div style="display:flex;align-items:center;gap:8px;flex:1">
+      <span style="font-size:13px;font-weight:500" id="trip-info">출장 정보 없음</span>
+      <span id="trip-badge"></span>
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="openModal('modal-trip')">✏️ 출장 정보 수정</button>
+  </div>
+
+  <!-- 출장 정보 없을 때 등록 유도 -->
+  <div id="no-trip-card" class="card" style="text-align:center;padding:20px;display:none">
+    <div style="font-size:24px;margin-bottom:8px">✈️</div>
+    <div style="font-weight:600;margin-bottom:4px">출장 정보를 먼저 등록해주세요</div>
+    <div class="text-muted" style="margin-bottom:12px">파견국가, 출발일, 귀국일을 입력하면 체크인이 활성화됩니다</div>
+    <button class="btn btn-primary" onclick="openModal('modal-trip')">+ 출장 정보 등록</button>
+  </div>
+
   <div class="grid3">
-    <div class="stat"><div class="stat-val" id="stat-total">—</div><div class="stat-lbl" id="sl1">출장 중 직원</div></div>
-    <div class="stat"><div class="stat-val" style="color:var(--green)" id="stat-safe">—</div><div class="stat-lbl" id="sl2">오늘 체크인</div></div>
-    <div class="stat"><div class="stat-val" style="color:var(--amber)" id="stat-over">—</div><div class="stat-lbl" id="sl3">미완료</div></div>
+    <div class="stat"><div class="stat-val" id="stat-total">—</div><div class="stat-lbl">출장 중 직원</div></div>
+    <div class="stat"><div class="stat-val" style="color:var(--green)" id="stat-safe">—</div><div class="stat-lbl">오늘 체크인</div></div>
+    <div class="stat"><div class="stat-val" style="color:var(--amber)" id="stat-over">—</div><div class="stat-lbl">미완료</div></div>
   </div>
 
   <div class="card mt12">
-    <div class="card-title">🙋 <span id="my-status-title">나의 안전 현황</span></div>
+    <div class="card-title">🙋 나의 체크인</div>
     <div class="status-bar">
       <div class="flex gap8" style="align-items:center">
         <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);flex-shrink:0"></div>
         <div>
           <div style="font-size:13px;font-weight:600">안전 · Safe</div>
-          <div class="text-muted" id="my-last-ci">체크인 후 팀 현황에 반영됩니다</div>
+          <div class="text-muted">체크인 후 팀 현황에 반영됩니다</div>
         </div>
       </div>
-      <span class="badge b-green"><span class="bdot"></span><span id="my-badge">안전</span></span>
+      <span class="badge b-green"><span class="bdot"></span>안전</span>
     </div>
-    <div class="grid2">
-      <div class="field"><label class="label">현재 위치 · Location</label>
-        <input type="text" id="my-loc" placeholder="예: 양곤, 미얀마"/></div>
-      <div class="field"><label class="label">숙소 · Accommodation</label>
-        <input type="text" id="my-hotel" placeholder="예: Traders Hotel 412호"/></div>
+
+    <!-- 위치 + GPS 버튼 -->
+    <div class="field">
+      <label class="label">현재 위치</label>
+      <div class="input-row">
+        <input type="text" id="my-loc" placeholder="예: 양곤 다운타운 현장"/>
+        <button class="btn-gps" id="btn-gps-ci" onclick="getGPS('ci-lat','ci-lng','my-loc')">📍 GPS</button>
+      </div>
+      <div class="gps-hint">GPS 버튼을 누르면 현재 위치가 자동 입력됩니다</div>
+      <input type="hidden" id="ci-lat"/>
+      <input type="hidden" id="ci-lng"/>
     </div>
-    <div class="field"><label class="label">상태 메모 · Note</label>
-      <input type="text" id="my-note" placeholder="예: 오후 2시 현장 미팅 예정"/></div>
+
+    <div class="field">
+      <label class="label">숙소</label>
+      <input type="text" id="my-hotel" placeholder="예: Traders Hotel 412호"/>
+    </div>
+    <div class="field">
+      <label class="label">상태 메모</label>
+      <input type="text" id="my-note" placeholder="예: 오후 2시 현장 미팅 예정"/>
+    </div>
     <div class="flex gap8">
-      <button class="btn btn-success" onclick="doCheckin()">✓ <span id="btn-ci">체크인</span></button>
-      <button class="btn btn-secondary" onclick="openModal('modal-schedule')">⏱ <span id="btn-sched">자동 설정</span></button>
+      <button class="btn btn-success" id="btn-checkin-main" onclick="doCheckin()">✓ 체크인</button>
+      <button class="btn btn-secondary" onclick="openModal('modal-trip')">✈️ 출장 정보</button>
     </div>
     <div class="mt12">
       <div style="display:flex;justify-content:space-between">
-        <span class="text-muted" id="lbl-next">다음 체크인까지</span>
-        <span style="font-size:12px;color:var(--accent)" id="next-timer">12h 00m</span>
+        <span class="text-muted">오늘 체크인 현황</span>
+        <span style="font-size:12px;color:var(--accent)" id="next-timer">체크인 대기 중</span>
       </div>
       <div class="prog-bar mt8"><div class="prog-fill" style="width:5%"></div></div>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-title">📋 <span id="hist-title">체크인 기록</span></div>
+    <div class="card-title">📋 내 체크인 기록</div>
     <ul class="tl" id="checkin-history">
       <li style="color:var(--muted);font-size:12.5px;list-style:none;padding:4px 0">체크인 후 기록이 표시됩니다</li>
     </ul>
@@ -444,29 +622,32 @@ textarea{resize:vertical;min-height:72px;}
 
   <div class="card">
     <div class="sec-hdr">
-      <div><div class="sec-title" id="team-title">팀 현황 · Team Status</div>
-        <div class="sec-sub" id="team-sub">실시간 · 로그인한 팀원이 표시됩니다</div></div>
+      <div>
+        <div class="sec-title">팀 현황 · Team Status</div>
+        <div class="sec-sub">실시간 · 로그인한 팀원이 표시됩니다</div>
+      </div>
     </div>
     <div id="team-list"><div style="color:var(--muted);font-size:12.5px;padding:8px 0">체크인한 팀원이 여기 표시됩니다</div></div>
   </div>
 
-  <button class="sos" id="sos" onclick="triggerSOS()">🆘 &nbsp; SOS 긴급 연락 · Emergency Alert</button>
+  <button class="sos" onclick="triggerSOS()">🆘 &nbsp; SOS 긴급 연락 · Emergency Alert</button>
 </div>
 
 <!-- ══ 페이지 2: 현지 장소 ══ -->
 <div class="page" id="page-places">
   <div class="sec-hdr">
-    <div><div class="sec-title" id="pl-title">현지 장소 공유</div>
-      <div class="sec-sub" id="pl-sub">구글맵 미등록 장소 · Off-map gems</div></div>
-    <button class="btn btn-primary" onclick="openModal('modal-place')">+ <span id="btn-addplace">장소 추가</span></button>
+    <div>
+      <div class="sec-title">현지 장소 공유</div>
+      <div class="sec-sub">구글맵 미등록 장소 · GPS 핀 지원</div>
+    </div>
+    <button class="btn btn-primary" onclick="openModal('modal-place')">+ 장소 추가</button>
   </div>
 
-  <!-- Maps API 키 입력 후 지도가 자동으로 표시됩니다 -->
   <div style="margin-bottom:12px">
     <div class="map-placeholder" id="map-placeholder">
       <div style="font-size:28px">🗺️</div>
-      <div>Google Maps API 키 설정 후 지도가 표시됩니다</div>
-      <div style="font-size:11px;color:var(--muted2)">파일 하단 YOUR_MAPS_API_KEY를 교체하세요</div>
+      <div>Google Maps API 키 설정 후 지도와 GPS 핀이 표시됩니다</div>
+      <div style="font-size:11px;color:var(--muted2)">파일 하단 YOUR_MAPS_API_KEY 교체</div>
     </div>
     <div id="map" style="display:none"></div>
   </div>
@@ -487,18 +668,18 @@ textarea{resize:vertical;min-height:72px;}
   <div id="places-list"></div>
 </div>
 
-<!-- ══ 페이지 3: 영수증 관리 ══ -->
+<!-- ══ 페이지 3: 영수증 ══ -->
 <div class="page" id="page-receipts">
   <div class="sec-hdr">
-    <div><div class="sec-title" id="rc-title">영수증 관리</div>
-      <div class="sec-sub" id="rc-sub">사진 저장 → 수동 입력 → HR 검토</div></div>
+    <div>
+      <div class="sec-title">영수증 관리</div>
+      <div class="sec-sub">사진 저장 → 수동 입력 → HR 검토</div>
+    </div>
     <div class="flex gap8">
       <button class="btn btn-secondary" onclick="exportCSV()">↓ CSV</button>
-      <button class="btn btn-primary" onclick="openModal('modal-receipt')">+ <span id="btn-addreceipt">영수증 추가</span></button>
+      <button class="btn btn-primary" onclick="openModal('modal-receipt')">+ 영수증 추가</button>
     </div>
   </div>
-
-  <!-- 영수증 추가 안내 -->
   <div class="card">
     <div class="dropzone" onclick="openModal('modal-receipt')"
          ondragover="event.preventDefault();this.classList.add('drag')"
@@ -506,19 +687,14 @@ textarea{resize:vertical;min-height:72px;}
          ondrop="handleFileDrop(event)">
       <div class="drop-ico">📷</div>
       <div style="font-size:13.5px;font-weight:600">영수증 사진 업로드</div>
-      <div class="text-muted mt8">사진을 서버에 먼저 저장 → 금액·상호 직접 입력 → HR 검토</div>
-    </div>
-    <div class="hr-note">
-      💡 AI 자동 스캔은 현재 비활성화 상태입니다. 사진은 서버에 저장되므로 HR 담당자가 원본 사진으로 금액을 직접 확인할 수 있습니다.
+      <div class="text-muted mt8">사진 서버 저장 → 금액 직접 입력 → HR 검토</div>
     </div>
   </div>
-
   <div class="grid3">
-    <div class="stat"><div class="stat-val" id="r-total">$0</div><div class="stat-lbl" id="rl1">이번 출장 합계</div></div>
-    <div class="stat"><div class="stat-val" id="r-count">0</div><div class="stat-lbl" id="rl2">영수증 수</div></div>
-    <div class="stat"><div class="stat-val" id="r-topcat" style="font-size:15px">—</div><div class="stat-lbl" id="rl3">최다 지출</div></div>
+    <div class="stat"><div class="stat-val" id="r-total">$0</div><div class="stat-lbl">이번 출장 합계</div></div>
+    <div class="stat"><div class="stat-val" id="r-count">0</div><div class="stat-lbl">영수증 수</div></div>
+    <div class="stat"><div class="stat-val" id="r-topcat" style="font-size:15px">—</div><div class="stat-lbl">최다 지출</div></div>
   </div>
-
   <div class="card mt12">
     <div class="card-title">저장된 영수증</div>
     <div style="overflow-x:auto">
@@ -534,27 +710,103 @@ textarea{resize:vertical;min-height:72px;}
 </div>
 </div><!-- #app -->
 
-<!-- ══ 모달들 ══ -->
-<div class="overlay" id="modal-schedule">
+<!-- ══ 모달: 출장 정보 ══ -->
+<div class="overlay" id="modal-trip">
   <div class="modal">
-    <div class="modal-hdr"><div class="modal-title">⏱ 자동 체크인 설정</div>
-      <button class="modal-close" onclick="closeModal('modal-schedule')">✕</button></div>
-    <div class="field"><label class="label">체크인 주기</label>
-      <select><option>6시간</option><option selected>12시간</option><option>24시간</option></select></div>
-    <div class="field"><label class="label">시작 시간</label><input type="time" value="08:00"/></div>
-    <div class="field"><label class="label">미체크인 시 관리자 알림</label>
-      <select><option>30분 후</option><option selected>1시간 후</option><option>2시간 후</option></select></div>
+    <div class="modal-hdr">
+      <div class="modal-title">✈️ 출장 정보 등록</div>
+      <button class="modal-close" onclick="closeModal('modal-trip')">✕</button>
+    </div>
+    <div class="field">
+      <label class="label">파견 국가 *</label>
+      <select id="trip-country">
+        <option value="">— 국가 선택 —</option>
+        <optgroup label="🌏 동남아시아">
+          <option>미얀마 Myanmar</option>
+          <option>캄보디아 Cambodia</option>
+          <option>베트남 Vietnam</option>
+          <option>라오스 Laos</option>
+          <option>태국 Thailand</option>
+          <option>필리핀 Philippines</option>
+          <option>인도네시아 Indonesia</option>
+          <option>동티모르 Timor-Leste</option>
+        </optgroup>
+        <optgroup label="🌏 남아시아">
+          <option>방글라데시 Bangladesh</option>
+          <option>인도 India</option>
+          <option>네팔 Nepal</option>
+          <option>스리랑카 Sri Lanka</option>
+          <option>파키스탄 Pakistan</option>
+        </optgroup>
+        <optgroup label="🌍 아프리카">
+          <option>케냐 Kenya</option>
+          <option>잠비아 Zambia</option>
+          <option>탄자니아 Tanzania</option>
+          <option>우간다 Uganda</option>
+          <option>에티오피아 Ethiopia</option>
+          <option>르완다 Rwanda</option>
+          <option>모잠비크 Mozambique</option>
+          <option>가나 Ghana</option>
+          <option>세네갈 Senegal</option>
+          <option>카메룬 Cameroon</option>
+        </optgroup>
+        <optgroup label="🌎 기타 개발도상국">
+          <option>아이티 Haiti</option>
+          <option>볼리비아 Bolivia</option>
+          <option>페루 Peru</option>
+          <option>콜롬비아 Colombia</option>
+          <option>기타 Other</option>
+        </optgroup>
+      </select>
+    </div>
+    <div class="field">
+      <label class="label">파견 지역 (직접 입력)</label>
+      <input type="text" id="trip-region" placeholder="예: 양곤 북부 산업단지, 다카 가지푸르"/>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label class="label">출발일 *</label>
+        <input type="date" id="trip-start"/>
+      </div>
+      <div class="field">
+        <label class="label">귀국일 *</label>
+        <input type="date" id="trip-end"/>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);background:var(--bg3);border-radius:var(--r-sm);padding:10px 12px">
+      💡 출장 기간 내 하루 1회만 체크인 가능합니다. 기간 외에는 체크인 버튼이 비활성화됩니다.
+    </div>
     <div class="modal-foot">
-      <button class="btn btn-secondary" onclick="closeModal('modal-schedule')">취소</button>
-      <button class="btn btn-primary" onclick="closeModal('modal-schedule');showToast('자동 체크인 일정 저장됨')">저장</button>
+      <button class="btn btn-secondary" onclick="closeModal('modal-trip')">취소</button>
+      <button class="btn btn-primary" onclick="saveTrip()">저장</button>
     </div>
   </div>
 </div>
 
+<!-- ══ 모달: 프로필 수정 ══ -->
+<div class="overlay" id="modal-profile-edit">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title">👤 프로필 수정</div>
+      <button class="modal-close" onclick="closeModal('modal-profile-edit')">✕</button>
+    </div>
+    <div class="field"><label class="label">이름 *</label><input type="text" id="pe-name"/></div>
+    <div class="field"><label class="label">소속 팀</label><input type="text" id="pe-team"/></div>
+    <div class="field"><label class="label">직책</label><input type="text" id="pe-role"/></div>
+    <div class="modal-foot">
+      <button class="btn btn-secondary" onclick="closeModal('modal-profile-edit')">취소</button>
+      <button class="btn btn-primary" onclick="updateProfile()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 모달: 장소 추가 ══ -->
 <div class="overlay" id="modal-place">
   <div class="modal">
-    <div class="modal-hdr"><div class="modal-title">📍 장소 추가</div>
-      <button class="modal-close" onclick="closeModal('modal-place')">✕</button></div>
+    <div class="modal-hdr">
+      <div class="modal-title">📍 장소 추가</div>
+      <button class="modal-close" onclick="closeModal('modal-place')">✕</button>
+    </div>
     <div class="grid2">
       <div class="field"><label class="label">장소명 *</label>
         <input type="text" id="p-name" placeholder="예: 999 샨 국수 식당"/></div>
@@ -569,11 +821,16 @@ textarea{resize:vertical;min-height:72px;}
         <select id="p-rating"><option value="5">⭐⭐⭐⭐⭐</option><option value="4">⭐⭐⭐⭐</option>
           <option value="3" selected>⭐⭐⭐</option><option value="2">⭐⭐</option><option value="1">⭐</option></select></div>
     </div>
-    <div class="field"><label class="label">GPS 좌표 (선택 — 지도 핀 표시용)</label>
-      <div class="flex gap8">
-        <input type="text" id="p-lat" placeholder="위도 예: 16.8661" style="flex:1"/>
-        <input type="text" id="p-lng" placeholder="경도 예: 96.1951" style="flex:1"/>
-      </div></div>
+    <!-- GPS 좌표 자동 불러오기 -->
+    <div class="field">
+      <label class="label">GPS 좌표 (지도 핀 표시용)</label>
+      <div class="input-row">
+        <input type="text" id="p-lat" placeholder="위도 · Latitude" style="flex:1"/>
+        <input type="text" id="p-lng" placeholder="경도 · Longitude" style="flex:1"/>
+        <button class="btn-gps" onclick="getGPS('p-lat','p-lng',null)">📍 GPS</button>
+      </div>
+      <div class="gps-hint">GPS 버튼으로 현재 위치 좌표를 자동 입력 — 지도에 핀으로 표시됩니다</div>
+    </div>
     <div class="field"><label class="label">주소 / 찾아가는 방법</label>
       <textarea id="p-addr" placeholder="예: 아나와라타 도로 & 34번가 교차점 근처, 약국 2층"></textarea></div>
     <div class="field"><label class="label">팀원에게 한마디</label>
@@ -584,8 +841,7 @@ textarea{resize:vertical;min-height:72px;}
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="place-photos-preview">
         <div class="photo-placeholder" onclick="triggerPlacePhoto()">+</div>
       </div>
-      <input type="file" id="place-photo-input" accept="image/*" multiple style="display:none"
-             onchange="handlePlacePhotos(this)"/></div>
+      <input type="file" id="place-photo-input" accept="image/*" multiple style="display:none" onchange="handlePlacePhotos(this)"/></div>
     <div class="modal-foot">
       <button class="btn btn-secondary" onclick="closeModal('modal-place')">취소</button>
       <button class="btn btn-primary" onclick="savePlace()">저장</button>
@@ -593,15 +849,15 @@ textarea{resize:vertical;min-height:72px;}
   </div>
 </div>
 
+<!-- ══ 모달: 영수증 추가 ══ -->
 <div class="overlay" id="modal-receipt">
   <div class="modal">
-    <div class="modal-hdr"><div class="modal-title">🧾 영수증 추가</div>
-      <button class="modal-close" onclick="closeModal('modal-receipt')">✕</button></div>
-
-    <!-- ① 사진 업로드 -->
+    <div class="modal-hdr">
+      <div class="modal-title">🧾 영수증 추가</div>
+      <button class="modal-close" onclick="closeModal('modal-receipt')">✕</button>
+    </div>
     <div style="background:var(--bg3);border-radius:var(--r-sm);padding:12px;margin-bottom:14px">
-      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">
-        ① 사진 업로드 (선택 — HR 검토용)</div>
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">① 사진 업로드 (HR 검토용)</div>
       <div class="dropzone" style="padding:14px" id="receipt-dropzone"
            ondragover="event.preventDefault();this.classList.add('drag')"
            ondragleave="this.classList.remove('drag')"
@@ -611,17 +867,13 @@ textarea{resize:vertical;min-height:72px;}
         <div style="font-size:12.5px;margin-top:4px">사진 선택 또는 드래그</div>
         <div id="receipt-upload-status" style="font-size:12px;color:var(--teal);margin-top:4px"></div>
       </div>
-      <input type="file" id="receipt-photo-input" accept="image/*" capture="environment"
-             style="display:none" onchange="handleReceiptPhoto(this)"/>
+      <input type="file" id="receipt-photo-input" accept="image/*" capture="environment" style="display:none" onchange="handleReceiptPhoto(this)"/>
       <div id="receipt-photo-preview" style="margin-top:10px;display:none">
         <img id="receipt-preview-img" style="max-height:140px;border-radius:6px;border:1px solid var(--border);max-width:100%"/>
         <div style="font-size:11.5px;color:var(--green);margin-top:6px">✓ 저장 시 서버에 업로드됩니다</div>
       </div>
     </div>
-
-    <!-- ② 금액 직접 입력 -->
-    <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">
-      ② 금액 직접 입력</div>
+    <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">② 금액 직접 입력</div>
     <div class="grid2">
       <div class="field"><label class="label">상호명 *</label>
         <input type="text" id="r-shop" placeholder="예: 골든 키친"/></div>
@@ -644,26 +896,21 @@ textarea{resize:vertical;min-height:72px;}
   </div>
 </div>
 
-<!-- 사진 확대 뷰어 -->
+<!-- 라이트박스 -->
 <div id="lightbox" onclick="closeLightbox()">
   <button id="lb-close" onclick="closeLightbox()">✕</button>
   <img id="lightbox-img" src="" alt=""/>
 </div>
 <div class="toast" id="toast"></div>
 
-<!-- ┌──────────────────────────────────────────────────────────────┐
-     │  ★ Google Maps API 키 입력 위치 ★                          │
-     │  YOUR_MAPS_API_KEY → 실제 키로 교체하면 지도가 활성화됩니다 │
-     │  Google Cloud Console → Maps JS API → 사용자 인증 정보      │
-     └──────────────────────────────────────────────────────────────┘ -->
+<!-- ══ Google Maps (키 입력 후 활성화) ══ -->
 <script>
 (function(){
-  const key = 'YOUR_MAPS_API_KEY'; // ← 여기만 교체
+  const key = 'YOUR_MAPS_API_KEY'; // ← Google Cloud Console에서 발급한 키로 교체
   if (key === 'YOUR_MAPS_API_KEY') return;
   const s = document.createElement('script');
   s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&callback=initMap`;
-  s.async = true;
-  document.head.appendChild(s);
+  s.async = true; document.head.appendChild(s);
   window._mapsApiLoaded = true;
 })();
 
@@ -672,121 +919,165 @@ window.initMap = function() {
   const el = document.getElementById('map');
   document.getElementById('map-placeholder').style.display = 'none';
   el.style.display = 'block';
-  window.map = new google.maps.Map(el, {
-    center: { lat: 16.866, lng: 96.195 }, zoom: 5
-  });
+  window.map = new google.maps.Map(el, { center:{lat:16.866,lng:96.195}, zoom:5 });
   refreshMapPins();
 };
 
 window._mapMarkers = [];
 window.refreshMapPins = function() {
   if (!window.map) return;
-  window._mapMarkers.forEach(m => m.setMap(null));
+  window._mapMarkers.forEach(m=>m.setMap(null));
   window._mapMarkers = [];
+  const colors = {식당:'#ef9f27',숙소:'#2f81f7',상점:'#1a7f37',교통:'#6e40c9',기타:'#636c76'};
+  // 장소 핀
   (window._places||[]).forEach(p => {
-    if (!p.lat || !p.lng) return;
-    const colors = {식당:'#ef9f27',숙소:'#2f81f7',상점:'#1a7f37',교통:'#6e40c9',기타:'#636c76'};
+    if (!p.lat||!p.lng) return;
     const marker = new google.maps.Marker({
-      position: { lat: parseFloat(p.lat), lng: parseFloat(p.lng) },
-      map: window.map, title: p.name,
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 9,
-              fillColor: colors[p.cat]||'#636c76', fillOpacity:1,
-              strokeColor:'#fff', strokeWeight:2 }
+      position:{lat:parseFloat(p.lat),lng:parseFloat(p.lng)},
+      map:window.map, title:p.name,
+      icon:{path:google.maps.SymbolPath.CIRCLE,scale:9,
+            fillColor:colors[p.cat]||'#636c76',fillOpacity:1,strokeColor:'#fff',strokeWeight:2}
     });
-    const info = new google.maps.InfoWindow({
-      content: `<div style="font-size:13px;font-weight:600">${p.name}</div>
-                <div style="font-size:11px;color:#555">${p.cat} · ${p.city}</div>
-                <div style="font-size:11px;margin-top:4px">${'⭐'.repeat(p.rating||3)}</div>`
+    const info = new google.maps.InfoWindow({content:
+      `<div style="font-size:13px;font-weight:600">${p.name}</div>
+       <div style="font-size:11px;color:#555">${p.cat} · ${p.city}</div>
+       <div style="font-size:11px;margin-top:4px">${'⭐'.repeat(p.rating||3)}</div>`
     });
-    marker.addListener('click', () => info.open(window.map, marker));
+    marker.addListener('click',()=>info.open(window.map,marker));
+    window._mapMarkers.push(marker);
+  });
+  // 팀원 체크인 핀
+  Object.values(window._teamStatus||{}).forEach(m => {
+    if (!m.lat||!m.lng) return;
+    const marker = new google.maps.Marker({
+      position:{lat:parseFloat(m.lat),lng:parseFloat(m.lng)},
+      map:window.map, title:m.name,
+      icon:{path:google.maps.SymbolPath.CIRCLE,scale:7,
+            fillColor:'#1a7f37',fillOpacity:1,strokeColor:'#fff',strokeWeight:2,
+            labelOrigin:new google.maps.Point(0,-14)}
+    });
+    const info = new google.maps.InfoWindow({content:
+      `<div style="font-size:13px;font-weight:600">${m.name}</div>
+       <div style="font-size:11px;color:#555">${m.loc||''}</div>`
+    });
+    marker.addListener('click',()=>info.open(window.map,marker));
     window._mapMarkers.push(marker);
   });
 };
 </script>
 
 <script>
-const USD = {MMK:0.000476,BDT:0.0091,KES:0.0077,KHR:0.00025,ZMW:0.055,USD:1,EUR:1.08,KRW:0.00073};
-const catIco = {식당:'🍜',숙소:'🏨',상점:'🛒',교통:'🚕',기타:'📌'};
-let lang = 'ko';
-window._places = []; window._receipts = []; window._teamStatus = {};
-window._placePhotoFiles = []; window._pendingReceiptFile = null;
+const USD={MMK:0.000476,BDT:0.0091,KES:0.0077,KHR:0.00025,ZMW:0.055,USD:1,EUR:1.08,KRW:0.00073};
+const catIco={식당:'🍜',숙소:'🏨',상점:'🛒',교통:'🚕',기타:'📌'};
+let lang='ko';
+window._places=[]; window._receipts=[]; window._teamStatus={};
+window._placePhotoFiles=[]; window._pendingReceiptFile=null;
+window._myTrip=null;
 
-function showToast(msg, dur=2800) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), dur);
+function showToast(msg,dur=2800){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),dur);
 }
-function openModal(id)  { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-document.querySelectorAll('.overlay').forEach(el =>
-  el.addEventListener('click', e => { if(e.target===el) el.classList.remove('open'); })
+function openModal(id){
+  // 프로필 수정 모달 열 때 현재 값 채우기
+  if (id==='modal-profile-edit' && window._profile) {
+    document.getElementById('pe-name').value=window._profile.name||'';
+    document.getElementById('pe-team').value=window._profile.team||'';
+    document.getElementById('pe-role').value=window._profile.role||'';
+  }
+  // 출장 정보 모달 열 때 현재 값 채우기
+  if (id==='modal-trip' && window._myTrip) {
+    document.getElementById('trip-country').value=window._myTrip.country||'';
+    document.getElementById('trip-region').value=window._myTrip.region||'';
+    document.getElementById('trip-start').value=window._myTrip.start||'';
+    document.getElementById('trip-end').value=window._myTrip.end||'';
+  }
+  document.getElementById(id).classList.add('open');
+}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+document.querySelectorAll('.overlay').forEach(el=>
+  el.addEventListener('click',e=>{if(e.target===el)el.classList.remove('open');})
 );
-function openLightbox(url) {
-  document.getElementById('lightbox-img').src = url;
-  document.getElementById('lightbox').classList.add('open');
-}
-function closeLightbox() { document.getElementById('lightbox').classList.remove('open'); }
+function openLightbox(url){document.getElementById('lightbox-img').src=url;document.getElementById('lightbox').classList.add('open');}
+function closeLightbox(){document.getElementById('lightbox').classList.remove('open');}
 
-function switchPage(p) {
-  document.querySelectorAll('.page').forEach(e => e.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(e => e.classList.remove('active'));
+function switchPage(p){
+  document.querySelectorAll('.page').forEach(e=>e.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));
   document.getElementById('page-'+p).classList.add('active');
   document.getElementById('tab-'+p).classList.add('active');
-  if (p === 'places') refreshMapPins();
+  if(p==='places') refreshMapPins();
 }
 
-function renderTeamStatus() {
-  const list = document.getElementById('team-list');
-  const entries = Object.entries(window._teamStatus);
-  if (!entries.length) {
-    list.innerHTML = '<div style="color:var(--muted);font-size:12.5px;padding:8px 0">체크인한 팀원이 여기 표시됩니다</div>';
-    ['stat-total','stat-safe','stat-over'].forEach(id => document.getElementById(id).textContent = 0);
+// 프로필 수정
+window.updateProfile = async () => {
+  const name=document.getElementById('pe-name').value.trim();
+  if(!name){showToast('이름은 필수입니다');return;}
+  const profile={...window._profile, name,
+    team:document.getElementById('pe-team').value.trim(),
+    role:document.getElementById('pe-role').value.trim(),
+    ts:null};
+  // Firestore는 module scope에서만 접근 가능 — window 함수로 노출된 saveProfile 재활용
+  document.getElementById('ps-name').value=name;
+  document.getElementById('ps-team').value=profile.team;
+  document.getElementById('ps-role').value=profile.role;
+  await window.saveProfile();
+  closeModal('modal-profile-edit');
+};
+
+// 팀 현황
+function renderTeamStatus(){
+  const list=document.getElementById('team-list');
+  const entries=Object.entries(window._teamStatus);
+  if(!entries.length){
+    list.innerHTML='<div style="color:var(--muted);font-size:12.5px;padding:8px 0">체크인한 팀원이 여기 표시됩니다</div>';
+    ['stat-total','stat-safe','stat-over'].forEach(id=>document.getElementById(id).textContent=0);
     return;
   }
-  const now = Date.now();
-  let safe = 0, over = 0;
-  list.innerHTML = entries.map(([uid, m]) => {
-    const ts = m.ts?.toDate ? m.ts.toDate() : null;
-    const hoursAgo = ts ? (now - ts.getTime()) / 3600000 : 99;
-    const isOver = hoursAgo > 12;
-    if (isOver) over++; else safe++;
-    const timeStr = ts ? ts.toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-    const av = m.photoURL
-      ? `<div class="emp-av"><img src="${m.photoURL}"/></div>`
-      : `<div class="emp-av" style="color:var(--accent)">${(m.name||'?').slice(0,2)}</div>`;
+  const now=Date.now(); let safe=0,over=0;
+  list.innerHTML=entries.map(([uid,m])=>{
+    const ts=m.ts?.toDate?m.ts.toDate():null;
+    const hoursAgo=ts?(now-ts.getTime())/3600000:99;
+    const isOver=hoursAgo>12;
+    if(isOver)over++;else safe++;
+    const timeStr=ts?ts.toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
+    const av=m.photoURL?`<div class="emp-av"><img src="${m.photoURL}"/></div>`
+      :`<div class="emp-av" style="color:var(--accent)">${(m.name||'?').slice(0,2)}</div>`;
+    const subMeta=[m.team,m.role].filter(Boolean).join(' · ');
     return `<div class="emp-row">
       <div class="emp-l">${av}
         <div><div class="emp-name">${m.name||m.email||'—'}</div>
-        <div class="emp-meta">${m.loc||''} · ${timeStr}</div></div></div>
+        <div class="emp-meta">${subMeta?subMeta+' · ':''} ${m.loc||''} · ${timeStr}</div></div></div>
       <div class="emp-r">
         ${isOver
-          ? `<span class="badge b-amber"><span class="bdot"></span>미완료</span>
-             <button class="btn btn-secondary btn-xs" onclick="showToast('알림 발송됨')">알림</button>`
-          : `<span class="badge b-green"><span class="bdot"></span>안전</span>`}
+          ?`<span class="badge b-amber"><span class="bdot"></span>미완료</span>
+            <button class="btn btn-secondary btn-xs" onclick="showToast('알림 발송됨')">알림</button>`
+          :`<span class="badge b-green"><span class="bdot"></span>안전</span>`}
       </div></div>`;
   }).join('');
-  document.getElementById('stat-total').textContent = entries.length;
-  document.getElementById('stat-safe').textContent  = safe;
-  document.getElementById('stat-over').textContent  = over;
+  document.getElementById('stat-total').textContent=entries.length;
+  document.getElementById('stat-safe').textContent=safe;
+  document.getElementById('stat-over').textContent=over;
 }
 
-function triggerSOS() {
-  if (confirm('SOS 긴급 알림을 발송하시겠습니까?\n관리자 및 HR에 즉시 공유됩니다.'))
-    showToast('🆘 SOS 발송됨!', 4000);
+function triggerSOS(){
+  if(confirm('SOS 긴급 알림을 발송하시겠습니까?\n관리자 및 HR에 즉시 공유됩니다.'))
+    showToast('🆘 SOS 발송됨!',4000);
 }
 
-function filterPlaces() {
-  const q   = document.getElementById('search-place').value.toLowerCase();
-  const cat = document.getElementById('filter-cat').value;
-  const list = (window._places||[]).filter(p =>
-    (!cat || p.cat===cat) &&
-    (!q   || p.name?.toLowerCase().includes(q) ||
-             p.city?.toLowerCase().includes(q)  ||
-             (p.tags||[]).join(' ').toLowerCase().includes(q))
+// 장소
+function filterPlaces(){
+  const q=document.getElementById('search-place').value.toLowerCase();
+  const cat=document.getElementById('filter-cat').value;
+  const list=(window._places||[]).filter(p=>
+    (!cat||p.cat===cat)&&
+    (!q||p.name?.toLowerCase().includes(q)||p.city?.toLowerCase().includes(q)||
+        (p.tags||[]).join(' ').toLowerCase().includes(q))
   );
-  const c = document.getElementById('places-list');
-  if (!list.length) { c.innerHTML='<div class="card text-muted text-center" style="padding:2rem">등록된 장소 없음</div>'; return; }
-  c.innerHTML = list.map(p => `
+  const c=document.getElementById('places-list');
+  if(!list.length){c.innerHTML='<div class="card text-muted" style="text-align:center;padding:2rem">등록된 장소 없음</div>';return;}
+  c.innerHTML=list.map(p=>`
     <div class="place-wrap">
       <div class="place-top">
         <div style="flex:1">
@@ -806,37 +1097,36 @@ function filterPlaces() {
     </div>`).join('');
 }
 
-function triggerPlacePhoto() { document.getElementById('place-photo-input').click(); }
-function handlePlacePhotos(input) {
-  Array.from(input.files).forEach(file => {
-    (window._placePhotoFiles = window._placePhotoFiles||[]).push(file);
-    const img = document.createElement('img');
-    img.src = URL.createObjectURL(file); img.className = 'place-photo';
-    img.onclick = () => openLightbox(img.src);
-    const prev = document.getElementById('place-photos-preview');
-    prev.insertBefore(img, prev.lastElementChild);
+function triggerPlacePhoto(){document.getElementById('place-photo-input').click();}
+function handlePlacePhotos(input){
+  Array.from(input.files).forEach(file=>{
+    (window._placePhotoFiles=window._placePhotoFiles||[]).push(file);
+    const img=document.createElement('img');
+    img.src=URL.createObjectURL(file); img.className='place-photo';
+    img.onclick=()=>openLightbox(img.src);
+    const prev=document.getElementById('place-photos-preview');
+    prev.insertBefore(img,prev.lastElementChild);
   });
 }
 
-function renderReceipts() {
-  const tb = document.getElementById('r-tbody');
-  const list = window._receipts||[];
-  if (!list.length) {
-    tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:2rem">영수증 없음</td></tr>`;
+// 영수증
+function renderReceipts(){
+  const tb=document.getElementById('r-tbody');
+  const list=window._receipts||[];
+  if(!list.length){
+    tb.innerHTML=`<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:2rem">영수증 없음</td></tr>`;
     document.getElementById('r-total').textContent='$0';
     document.getElementById('r-count').textContent='0';
     document.getElementById('r-topcat').textContent='—';
     return;
   }
-  tb.innerHTML = list.map(r => {
-    const usd = ((r.amount||0)*(USD[r.currency]||1)).toFixed(2);
-    const statusBadge = {
-      pending_review:`<span class="badge b-amber" style="font-size:10px">⚠ HR검토</span>`,
-      manual:`<span class="badge b-blue" style="font-size:10px">수동</span>`,
-    }[r.scanStatus] || '';
-    const thumb = r.photoURL
-      ? `<img class="receipt-thumb" src="${r.photoURL}" onclick="openLightbox('${r.photoURL}')"/>`
-      : `<div class="thumb-placeholder">📷</div>`;
+  tb.innerHTML=list.map(r=>{
+    const usd=((r.amount||0)*(USD[r.currency]||1)).toFixed(2);
+    const sb={pending_review:`<span class="badge b-amber" style="font-size:10px">⚠ HR검토</span>`,
+               manual:`<span class="badge b-blue" style="font-size:10px">수동</span>`}[r.scanStatus]||'';
+    const thumb=r.photoURL
+      ?`<img class="receipt-thumb" src="${r.photoURL}" onclick="openLightbox('${r.photoURL}')"/>`
+      :`<div class="thumb-placeholder">📷</div>`;
     return `<tr>
       <td>${thumb}</td>
       <td style="color:var(--muted);font-size:11.5px">${r.date||''}</td>
@@ -845,79 +1135,64 @@ function renderReceipts() {
       <td style="color:var(--muted)">${r.currency}</td>
       <td class="mono">${Number(r.amount||0).toLocaleString()}</td>
       <td class="mono" style="color:var(--muted)">$${usd}</td>
-      <td>${statusBadge}</td>
+      <td>${sb}</td>
       <td><button class="btn btn-secondary btn-xs" onclick="delReceipt('${r.id}')">✕</button></td>
     </tr>`;
   }).join('');
-  const total = list.reduce((s,r)=>s+(r.amount||0)*(USD[r.currency]||1),0);
-  document.getElementById('r-total').textContent = '$'+Math.round(total);
-  document.getElementById('r-count').textContent = list.length;
-  const cc={}; list.forEach(r=>cc[r.cat]=(cc[r.cat]||0)+1);
-  const top = Object.entries(cc).sort((a,b)=>b[1]-a[1])[0];
-  document.getElementById('r-topcat').textContent = top?top[0]:'—';
+  const total=list.reduce((s,r)=>s+(r.amount||0)*(USD[r.currency]||1),0);
+  document.getElementById('r-total').textContent='$'+Math.round(total);
+  document.getElementById('r-count').textContent=list.length;
+  const cc={};list.forEach(r=>cc[r.cat]=(cc[r.cat]||0)+1);
+  const top=Object.entries(cc).sort((a,b)=>b[1]-a[1])[0];
+  document.getElementById('r-topcat').textContent=top?top[0]:'—';
 }
 
-function handleFileDrop(e) {
+function handleFileDrop(e){
   e.preventDefault();
-  const f = e.dataTransfer.files[0];
-  if (f) { openModal('modal-receipt'); setTimeout(()=>processReceiptPhoto(f),300); }
+  const f=e.dataTransfer.files[0];
+  if(f){openModal('modal-receipt');setTimeout(()=>processReceiptPhoto(f),300);}
 }
-function handleReceiptFileDrop(e) {
-  e.preventDefault(); document.getElementById('receipt-dropzone').classList.remove('drag');
-  const f = e.dataTransfer.files[0]; if (f) processReceiptPhoto(f);
+function handleReceiptFileDrop(e){
+  e.preventDefault();document.getElementById('receipt-dropzone').classList.remove('drag');
+  const f=e.dataTransfer.files[0];if(f)processReceiptPhoto(f);
 }
-function handleReceiptPhoto(input) { if(input.files[0]) processReceiptPhoto(input.files[0]); }
+function handleReceiptPhoto(input){if(input.files[0])processReceiptPhoto(input.files[0]);}
 
-function exportCSV() {
-  const hdr = 'Date,Shop,Category,Currency,Amount,USD,Status,PhotoURL\n';
-  const rows = (window._receipts||[]).map(r => {
-    const usd = ((r.amount||0)*(USD[r.currency]||1)).toFixed(2);
+function exportCSV(){
+  const hdr='Date,Shop,Category,Currency,Amount,USD,Status,PhotoURL\n';
+  const rows=(window._receipts||[]).map(r=>{
+    const usd=((r.amount||0)*(USD[r.currency]||1)).toFixed(2);
     return `${r.date||''},"${r.shop}",${r.cat},${r.currency},${r.amount||0},${usd},${r.scanStatus||''},${r.photoURL||''}`;
   }).join('\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([hdr+rows],{type:'text/csv'}));
-  a.download = 'fieldops_receipts_'+new Date().toISOString().slice(0,10)+'.csv';
-  a.click();
-  showToast('CSV 내보내기 완료');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([hdr+rows],{type:'text/csv'}));
+  a.download='fieldops_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click(); showToast('CSV 내보내기 완료');
 }
 
-const L = {
-  ko:{tSafety:'안전 체크인',tPlaces:'현지 장소',tReceipts:'영수증 관리',
-      sl1:'출장 중 직원',sl2:'오늘 체크인',sl3:'미완료',myBadge:'안전',
-      btnCI:'체크인',btnSched:'자동 설정',histTitle:'체크인 기록',
-      teamTitle:'팀 현황',teamSub:'실시간',
-      plTitle:'현지 장소 공유',plSub:'구글맵 미등록 장소',btnAddPlace:'장소 추가',
-      rcTitle:'영수증 관리',rcSub:'사진 저장 → 수동 입력 → HR 검토',
-      btnAddReceipt:'영수증 추가',rl1:'이번 출장 합계',rl2:'영수증 수',rl3:'최다 지출',
-      lnNext:'다음 체크인까지',sos:'🆘 SOS 긴급 연락'},
-  en:{tSafety:'Safety Check-in',tPlaces:'Local Places',tReceipts:'Receipts',
-      sl1:'Travelers',sl2:'Checked in',sl3:'Overdue',myBadge:'Safe',
-      btnCI:'Check In',btnSched:'Auto Schedule',histTitle:'History',
-      teamTitle:'Team Status',teamSub:'Live',
-      plTitle:'Local Places',plSub:'Off-map gems',btnAddPlace:'Add Place',
-      rcTitle:'Receipts',rcSub:'Photo → Manual entry → HR review',
-      btnAddReceipt:'Add Receipt',rl1:'Trip total',rl2:'Receipts',rl3:'Top category',
-      lnNext:'Next check-in',sos:'🆘 SOS Emergency Alert'},
-};
+// 출장 없으면 안내 카드 표시
+function checkTripCard(){
+  const noCard=document.getElementById('no-trip-card');
+  if(noCard) noCard.style.display=window._myTrip?'none':'block';
+}
+setTimeout(checkTripCard, 2000);
 
-function setLang(l) {
-  lang = l;
+// 언어 전환
+const L={
+  ko:{tSafety:'안전 체크인',tPlaces:'현지 장소',tReceipts:'영수증'},
+  en:{tSafety:'Safety Check-in',tPlaces:'Local Places',tReceipts:'Receipts'}
+};
+function setLang(l){
+  lang=l;
   document.getElementById('btn-ko').classList.toggle('active',l==='ko');
   document.getElementById('btn-en').classList.toggle('active',l==='en');
-  const t = L[l];
-  const map = {
-    't-safety':t.tSafety,'t-places':t.tPlaces,'t-receipts':t.tReceipts,
-    'sl1':t.sl1,'sl2':t.sl2,'sl3':t.sl3,'my-badge':t.myBadge,
-    'btn-ci':t.btnCI,'btn-sched':t.btnSched,'hist-title':t.histTitle,
-    'team-title':t.teamTitle,'team-sub':t.teamSub,
-    'pl-title':t.plTitle,'pl-sub':t.plSub,'btn-addplace':t.btnAddPlace,
-    'rc-title':t.rcTitle,'rc-sub':t.rcSub,'btn-addreceipt':t.btnAddReceipt,
-    'rl1':t.rl1,'rl2':t.rl2,'rl3':t.rl3,'lbl-next':t.lnNext,'sos':t.sos
-  };
-  Object.entries(map).forEach(([id,txt])=>{ const el=document.getElementById(id); if(el) el.textContent=txt; });
+  const t=L[l];
+  document.getElementById('t-safety').textContent=t.tSafety;
+  document.getElementById('t-places').textContent=t.tPlaces;
+  document.getElementById('t-receipts').textContent=t.tReceipts;
 }
 
-document.getElementById('r-date').value = new Date().toISOString().slice(0,10);
+document.getElementById('r-date').value=new Date().toISOString().slice(0,10);
 </script>
 </body>
 </html>
