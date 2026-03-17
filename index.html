@@ -346,7 +346,7 @@ textarea{resize:vertical;min-height:80px;}
     <div id="topbar">
       <div class="topbar-title" id="topbar-title">홈</div>
       <div class="topbar-actions">
-        <button class="btn btn-secondary btn-sm" onclick="openModal('modal-trip')">✈️ 출장 등록</button>
+        <button class="btn btn-secondary btn-sm" onclick="openNewTripModal()">✈️ 출장 등록</button>
         <div class="u-av" id="topbar-avatar" style="cursor:pointer" onclick="openModal('modal-profile-edit')">?</div>
       </div>
     </div>
@@ -368,7 +368,7 @@ textarea{resize:vertical;min-height:80px;}
         <div style="font-size:32px;margin-bottom:10px">✈️</div>
         <div style="font-size:14px;font-weight:600;margin-bottom:4px">출장 정보를 먼저 등록해주세요</div>
         <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">파견국가, 출발일, 귀국일을 입력하면 체크인이 활성화됩니다</div>
-        <button class="btn btn-primary" onclick="openModal('modal-trip')">+ 출장 정보 등록</button>
+        <button class="btn btn-primary" onclick="openNewTripModal()">+ 출장 정보 등록</button>
       </div>
       <div class="stats-row">
         <div class="stat-box"><div class="stat-val" id="stat-total">—</div><div class="stat-lbl">출장 중 직원</div></div>
@@ -449,7 +449,7 @@ textarea{resize:vertical;min-height:80px;}
     <div class="page" id="page-trip">
       <div class="sec-hdr">
         <div><div class="sec-title">✈️ 내 출장</div><div class="card-sub">출장 일정을 등록하고 관리하세요</div></div>
-        <button class="btn btn-primary" onclick="openModal('modal-trip')">+ 출장 등록</button>
+        <button class="btn btn-primary" onclick="openNewTripModal()">+ 출장 등록</button>
       </div>
       <div id="trip-list"><div class="empty-state"><div class="ico">✈️</div>등록된 출장이 없습니다</div></div>
     </div>
@@ -521,17 +521,18 @@ textarea{resize:vertical;min-height:80px;}
 <!-- ══ MODAL: 출장 등록 ══ -->
 <div class="overlay" id="modal-trip">
   <div class="modal">
-    <div class="modal-hdr"><span class="modal-title">✈️ 출장 정보 등록</span><button class="modal-close" onclick="closeModal('modal-trip')">✕</button></div>
+    <div class="modal-hdr"><span class="modal-title" id="modal-trip-title">✈️ 출장 정보 등록</span><button class="modal-close" onclick="closeTripModal()">✕</button></div>
+    <input type="hidden" id="trip-edit-id"/>
     <div class="field">
       <label class="label">파견 국가 *</label>
       <select id="trip-country">
         <option value="">-- 선택 --</option>
-        <option>대한민국</option><option>에콰도르</option><option>알제리</option><option>키르기즈스탄</option>
-        <option>베트남</option><option>태국</option><option>인도네시아</option><option>필리핀</option>
-        <option>우즈베키스탄</option><option>세네갈</option><option>우간다</option><option>파라과이</option>
-        <option>캄보디아</option><option>라오스</option><option>미얀마</option><option>콜롬비아</option>
-        <option>가나</option><option>캄보디아</option><option>라오스</option><option>방글라데시</option>
-        <option>르완다</option><option>말레이시아</option><option>기타</option>
+        <option>대한민국</option><option>캄보디아</option><option>라오스</option><option>방글라데시</option>
+        <option>우간다</option><option>세네갈</option><option>르완다</option><option>필리핀</option>
+        <option>인도네시아</option><option>가나</option><option>인도</option><option>말레이시아</option>
+        <option>우즈베키스탄</option><option>키르기즈스탄</option><option>타지키스탄</option><option>탄자니아</option>
+        <option>파라과이</option><option>에콰도르</option><option>콜롬비아</option><option>엘살바도르</option>
+        <option>코스타리카</option><option>태국</option><option>기타</option>
       </select>
     </div>
     <div class="field"><label class="label">도시</label><input type="text" id="trip-city" placeholder="예: 도쿄, 방콕, 프놈펜"/></div>
@@ -552,6 +553,10 @@ textarea{resize:vertical;min-height:80px;}
   <div class="modal">
     <div class="modal-hdr"><span class="modal-title" id="checkin-modal-title">📍 현지 도착 체크인</span><button class="modal-close" onclick="closeModal('modal-checkin')">✕</button></div>
     <input type="hidden" id="checkin-type" value="arrive"/>
+    <div class="field" id="checkin-trip-select-wrap" style="display:none">
+      <label class="label">출장 선택 *</label>
+      <select id="checkin-trip-select" onchange="onCheckinTripChange()"></select>
+    </div>
     <div class="field">
       <label class="label">현재 위치 (국가, 도시) *</label>
       <div style="display:flex;gap:8px">
@@ -813,38 +818,67 @@ window.saveTrip=async()=>{
   const end=document.getElementById('trip-end').value;
   if(!country||!start||!end){showToast('국가·출발일·귀국일은 필수입니다');return;}
   if(start>end){showToast('귀국일이 출발일보다 빠를 수 없습니다');return;}
+  const editId=document.getElementById('trip-edit-id').value;
   const trip={uid:window._currentUser.uid,name:window._profile?.name||window._currentUser.displayName,
     country,city,purpose,start,end,ts:serverTimestamp()};
-  await setDoc(doc(db,'trips',window._currentUser.uid),trip);
-  window._myTrip=trip;
+  if(editId){
+    await setDoc(doc(db,'trips',editId),trip);
+    showToast('✓ 출장 수정됨');
+  } else {
+    await addDoc(collection(db,'trips'),trip);
+    showToast('✓ 출장 등록됨');
+  }
+  document.getElementById('trip-edit-id').value='';
   closeModal('modal-trip');
-  renderTripBanner();
-  renderTripPage();
-  showToast('✓ 출장 정보 저장됨');
+  loadMyTrips();
   checkMissedCheckins();
 };
 
-window.deleteMyTrip=async()=>{
-  if(!confirm('출장 기록을 삭제하시겠습니까?')) return;
-  await deleteDoc(doc(db,'trips',window._currentUser.uid));
-  window._myTrip=null;
-  document.getElementById('trip-list').innerHTML='<div class="empty-state"><div class="ico">✈️</div>등록된 출장이 없습니다</div>';
-  document.getElementById('trip-banner').classList.remove('show');
-  document.getElementById('no-trip').classList.add('show');
-  ['btn-arrive','btn-arrive2','btn-return','btn-return2'].forEach(id=>{
-    const b=document.getElementById(id); if(b) b.disabled=true;
-  });
-  showToast('출장 기록이 삭제되었습니다');
+window.deleteTrip=async(tripId)=>{
+  if(!confirm('이 출장을 삭제하시겠습니까?')) return;
+  await deleteDoc(doc(db,'trips',tripId));
+  showToast('출장이 삭제되었습니다');
+  loadMyTrips();
 };
 
-async function loadMyTrip() {
-  const snap=await getDoc(doc(db,'trips',window._currentUser.uid));
-  if(snap.exists()){window._myTrip=snap.data();renderTripBanner();renderTripPage();}
-  else{document.getElementById('no-trip').classList.add('show');}
+window.openTripEdit=(tripId)=>{
+  const t=(window._myTrips||[]).find(x=>x.id===tripId);
+  if(!t) return;
+  document.getElementById('trip-edit-id').value=tripId;
+  document.getElementById('trip-country').value=t.country||'';
+  document.getElementById('trip-city').value=t.city||'';
+  document.getElementById('trip-purpose').value=t.purpose||'';
+  document.getElementById('trip-start').value=t.start||'';
+  document.getElementById('trip-end').value=t.end||'';
+  document.getElementById('modal-trip-title').textContent='✈️ 출장 수정';
+  openModal('modal-trip');
+};
+
+async function loadMyTrips() {
+  try {
+    const snap=await getDocs(query(collection(db,'trips'),where('uid','==',window._currentUser.uid),orderBy('start','desc')));
+    window._myTrips=snap.docs.map(d=>({id:d.id,...d.data()}));
+    // Active trip = today within range
+    const today=new Date().toISOString().slice(0,10);
+    window._myTrip=window._myTrips.find(t=>today>=t.start&&today<=t.end)||null;
+    renderTripBanner();
+    renderTripPage();
+  } catch(e){ console.warn('loadMyTrips:',e); }
 }
 
+// keep old name as alias
+async function loadMyTrip(){ return loadMyTrips(); }
+
 function renderTripBanner() {
-  const t=window._myTrip; if(!t) return;
+  const t=window._myTrip;
+  if(!t){
+    document.getElementById('no-trip').classList.add('show');
+    document.getElementById('trip-banner').classList.remove('show');
+    ['btn-arrive','btn-arrive2','btn-return','btn-return2'].forEach(id=>{
+      const b=document.getElementById(id); if(b) b.disabled=true;
+    });
+    return;
+  }
   document.getElementById('no-trip').classList.remove('show');
   const today=new Date().toISOString().slice(0,10);
   const active=today>=t.start&&today<=t.end;
@@ -858,35 +892,40 @@ function renderTripBanner() {
   ['btn-arrive','btn-arrive2','btn-return','btn-return2'].forEach(id=>{
     const b=document.getElementById(id); if(b) b.disabled=!active;
   });
-  document.getElementById('trip-country').value=t.country||'';
-  document.getElementById('trip-city').value=t.city||'';
-  document.getElementById('trip-purpose').value=t.purpose||'';
-  document.getElementById('trip-start').value=t.start||'';
-  document.getElementById('trip-end').value=t.end||'';
 }
 
 function renderTripPage() {
-  const t=window._myTrip; if(!t) return;
+  const trips=window._myTrips||[];
+  const el=document.getElementById('trip-list');
+  if(!trips.length){
+    el.innerHTML='<div class="empty-state"><div class="ico">✈️</div>등록된 출장이 없습니다</div>';
+    return;
+  }
   const today=new Date().toISOString().slice(0,10);
-  const active=today>=t.start&&today<=t.end;
-  const sched=today<t.start;
-  const status=active?'진행중':(sched?'예정':'완료');
-  const bclass=active?'b-green':(sched?'b-amber':'b-gray');
-  document.getElementById('trip-list').innerHTML=`
-    <div class="card" style="margin-bottom:0">
+  el.innerHTML=trips.map(t=>{
+    const active=today>=t.start&&today<=t.end;
+    const sched=today<t.start;
+    const status=active?'진행중':(sched?'예정':'완료');
+    const bclass=active?'b-green':(sched?'b-amber':'b-gray');
+    const isCurrentTrip=window._myTrip?.id===t.id;
+    return `<div class="card" style="margin-bottom:10px;${isCurrentTrip?'border-color:var(--accent);border-width:2px':''}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
         <div>
-          <div style="font-size:15px;font-weight:700">${t.country}${t.city?', '+t.city:''}</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="font-size:15px;font-weight:700">${t.country}${t.city?', '+t.city:''}</div>
+            ${isCurrentTrip?'<span style="font-size:10px;background:var(--accent-light);color:var(--accent);padding:2px 7px;border-radius:20px;font-weight:600">현재 출장</span>':''}
+          </div>
           ${t.purpose?`<div style="font-size:12.5px;color:var(--muted);margin-top:2px">${t.purpose}</div>`:''}
         </div>
         <span class="badge ${bclass}">${status}</span>
       </div>
       <div style="font-size:12.5px;color:var(--muted)">📅 ${t.start} ~ ${t.end}</div>
       <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-secondary btn-sm" onclick="openModal('modal-trip')">✏️ 수정</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteMyTrip()">🗑 삭제</button>
+        <button class="btn btn-secondary btn-sm" onclick="openTripEdit('${t.id}')">✏️ 수정</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteTrip('${t.id}')">🗑 삭제</button>
       </div>
     </div>`;
+  }).join('');
 }
 
 // ── MISSED CHECKIN ALERT ──────────────────────────────────
@@ -1427,6 +1466,94 @@ window.showToast=msg=>{
 };
 
 document.getElementById('r-date').value=new Date().toISOString().slice(0,10);
+
+// ── TRIP MODAL HELPERS ─────────────────────────────────────
+window.openNewTripModal=()=>{
+  document.getElementById('trip-edit-id').value='';
+  document.getElementById('trip-country').value='';
+  document.getElementById('trip-city').value='';
+  document.getElementById('trip-purpose').value='';
+  document.getElementById('trip-start').value='';
+  document.getElementById('trip-end').value='';
+  document.getElementById('modal-trip-title').textContent='✈️ 출장 정보 등록';
+  openModal('modal-trip');
+};
+
+window.closeTripModal=()=>{
+  document.getElementById('trip-edit-id').value='';
+  document.getElementById('modal-trip-title').textContent='✈️ 출장 정보 등록';
+  closeModal('modal-trip');
+};
+
+// ── CHECKIN TRIP SELECTOR ─────────────────────────────────
+window.onCheckinTripChange=()=>{
+  const sel=document.getElementById('checkin-trip-select');
+  const tripId=sel.value;
+  const trip=(window._myTrips||[]).find(t=>t.id===tripId);
+  if(trip) document.getElementById('ci-location').value=`${trip.country}${trip.city?', '+trip.city:''}`;
+  window._checkinSelectedTrip=trip||null;
+};
+
+// override openCheckinModal to handle multi-trip
+window.openCheckinModal=type=>{
+  const today=new Date().toISOString().slice(0,10);
+  const activeTrips=(window._myTrips||[]).filter(t=>today>=t.start&&today<=t.end);
+  const wrap=document.getElementById('checkin-trip-select-wrap');
+  const sel=document.getElementById('checkin-trip-select');
+
+  if(activeTrips.length>1){
+    // Show selector
+    wrap.style.display='block';
+    sel.innerHTML=activeTrips.map(t=>`<option value="${t.id}">${t.country}${t.city?', '+t.city:''} (${t.start}~${t.end})</option>`).join('');
+    const first=activeTrips[0];
+    window._checkinSelectedTrip=first;
+    document.getElementById('ci-location').value=`${first.country}${first.city?', '+first.city:''}`;
+  } else {
+    wrap.style.display='none';
+    const trip=activeTrips[0]||window._myTrip;
+    window._checkinSelectedTrip=trip||null;
+    if(trip) document.getElementById('ci-location').value=`${trip.country}${trip.city?', '+trip.city:''}`;
+  }
+  document.getElementById('checkin-type').value=type;
+  document.getElementById('checkin-modal-title').textContent=type==='arrive'?'📍 현지 도착 체크인':'🏠 귀국 완료 체크인';
+  document.getElementById('ci-gps-status').textContent='';
+  openModal('modal-checkin');
+};
+
+// patch submitCheckin to use selected trip
+const _origSubmitCheckin=window.submitCheckin;
+window.submitCheckin=async()=>{
+  const type=document.getElementById('checkin-type').value;
+  const location=document.getElementById('ci-location').value.trim();
+  const note=document.getElementById('ci-note').value.trim();
+  if(!location){showToast('위치를 입력해주세요');return;}
+  const user=window._currentUser;
+  const trip=window._checkinSelectedTrip||window._myTrip;
+  const ciLat=parseFloat(document.getElementById('ci-lat').value)||null;
+  const ciLng=parseFloat(document.getElementById('ci-lng').value)||null;
+  await addDoc(collection(db,'checkins'),{
+    uid:user.uid,name:window._profile?.name||user.displayName,
+    team:window._profile?.team||'',role:window._profile?.role||'',
+    email:user.email,type,location,note,lat:ciLat,lng:ciLng,
+    tripId:trip?.id||null,
+    country:trip?.country||'',city:trip?.city||'',ts:serverTimestamp()
+  });
+  await setDoc(doc(db,'team_status',user.uid),{
+    name:window._profile?.name||user.displayName,
+    team:window._profile?.team||'',role:window._profile?.role||'',
+    email:user.email,photoURL:user.photoURL||null,
+    location,lat:ciLat,lng:ciLng,
+    country:trip?.country||'',city:trip?.city||'',
+    status:type==='arrive'?'safe':'returned',ts:serverTimestamp()
+  });
+  document.getElementById('ci-location').value='';
+  document.getElementById('ci-note').value='';
+  document.getElementById('ci-lat').value='';
+  document.getElementById('ci-lng').value='';
+  closeModal('modal-checkin');
+  showToast(type==='arrive'?'✓ 현지 도착 체크인 완료!':'✓ 귀국 완료 체크인!');
+  if(window._map) refreshMapMarkers();
+};
 </script>
 
 <script>
