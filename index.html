@@ -523,7 +523,7 @@ function copyBeanUrl(){
     <!-- ══ PLACES ══ -->
     <div class="page" id="page-places">
       <div class="sec-hdr">
-        <div><div class="sec-title">📍 장소 공유</div><div class="card-sub">숨은 맛집과 유용한 장소를 공유하세요</div></div>
+        <div><div class="sec-title">📍 장소 공유</div><div class="card-sub"버켈라인들에게만 알려주는 현지 생존비법/div></div>
         <button class="btn btn-primary" onclick="openModal('modal-place')">+ 장소 공유</button>
       </div>
       <div class="filter-bar">
@@ -532,7 +532,7 @@ function copyBeanUrl(){
         <button class="filter-btn" onclick="setPlaceCat(this,'식당')" data-cat="식당">🍽 식당</button>
         <button class="filter-btn" onclick="setPlaceCat(this,'카페')" data-cat="카페">☕ 카페</button>
         <button class="filter-btn" onclick="setPlaceCat(this,'숙소')" data-cat="숙소">🏨 숙소</button>
-        <button class="filter-btn" onclick="setPlaceCat(this,'병원')" data-cat="병원">🏥 기타</button>
+        <button class="filter-btn" onclick="setPlaceCat(this,'병원')" data-cat="병원">🏥 업체</button>
       </div>
       <div id="places-list"><div class="empty-state"><div class="ico">📍</div>장소를 추가하면 여기에 표시됩니다</div></div>
     </div>
@@ -540,7 +540,7 @@ function copyBeanUrl(){
     <!-- ══ RECEIPTS ══ -->
     <div class="page" id="page-receipts">
       <div class="sec-hdr">
-        <div><div class="sec-title">🧾 영수증 저장소</div><div class="card-sub">출장 경비를 기록하고 관리하세요</div></div>
+        <div><div class="sec-title">🧾 영수증 저장소</div><div class="card-sub">정산이 두려운 자 개협에 뛰어들지 말라</div></div>
         <button class="btn btn-primary" onclick="openModal('modal-receipt')">+ 영수증 추가</button>
       </div>
       <div class="receipt-summary">
@@ -684,7 +684,7 @@ function copyBeanUrl(){
         <option>싱가포르</option><option>말레이시아</option><option>인도</option><option>UAE</option>
         <option>캄보디아</option><option>라오스</option><option>미얀마</option><option>사우디아라비아</option>
         <option>영국</option><option>독일</option><option>프랑스</option><option>호주</option>
-        <option>캐나다</option><option>브라질</option><option>기타</option>
+        <option>캐나다</option><option>브라질</option><option>업체</option>
       </select>
     </div>
     <div class="field"><label class="label">도시</label><input type="text" id="trip-city" placeholder="예: 도쿄, 방콕, 프놈펜"/></div>
@@ -759,7 +759,7 @@ function copyBeanUrl(){
         <select id="p-cat">
           <option value="식당">🍽 식당</option><option value="카페">☕ 카페</option>
           <option value="숙소">🏨 숙소</option><option value="병원">🏥 병원</option>
-          <option value="관광">🏛 관광</option><option value="마트">🛒 마트</option><option value="기타">📌 기타</option>
+          <option value="관광">🏛 관광</option><option value="마트">🛒 마트</option><option value="업체">📌 업체</option>
         </select>
       </div>
       <div class="field">
@@ -833,7 +833,7 @@ function copyBeanUrl(){
       <select id="r-cat">
         <option value="식비">🍽 식비</option><option value="교통">🚗 교통</option>
         <option value="숙박">🏨 숙박</option><option value="통신">📱 통신</option>
-        <option value="업무용품">📎 업무용품</option><option value="접대">🤝 접대</option><option value="기타">📌 기타</option>
+        <option value="업무용품">📎 업무용품</option><option value="접대">🤝 접대</option><option value="업체">📌 업체</option>
       </select>
     </div>
     <div class="modal-foot">
@@ -1372,7 +1372,7 @@ function renderPlaces(list) {
           <div class="pc-name">${p.name}</div>
           <div class="pc-city">📍 ${p.city}</div>
           <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-            <span class="pc-cat ${catClass(p.cat)}">${p.cat||'기타'}</span>
+            <span class="pc-cat ${catClass(p.cat)}">${p.cat||'업체'}</span>
             <span class="pc-stars">${stars}</span>
           </div>
         </div>
@@ -1592,7 +1592,7 @@ function renderReceipts() {
       ${thumbHtml}
       <div class="ri-info">
         <div class="ri-shop">${r.shop||'—'}</div>
-        <div class="ri-meta">${r.date||''} · <span class="badge b-gray" style="font-size:10.5px;padding:1px 6px">${r.cat||'기타'}</span></div>
+        <div class="ri-meta">${r.date||''} · <span class="badge b-gray" style="font-size:10.5px;padding:1px 6px">${r.cat||'업체'}</span></div>
       </div>
       <div class="ri-right">
         ${r.amount?`<div class="ri-amount">${r.amount.toLocaleString()}</div><div class="ri-currency">${r.currency||'KRW'}</div>`:'<div class="ri-currency">금액없음</div>'}
