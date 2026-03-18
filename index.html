@@ -635,7 +635,7 @@ function copyBeanUrl(){
       <div style="font-size:13.5px;color:var(--muted);line-height:1.7;margin-bottom:20px">
         구글 드라이브 연결 시 구글이<br/>
         <strong style="color:var(--text)">"앱 미검증"</strong> 경고를 띄울 거예요.<br/><br/>
-        저희 사내 출장 관리 앱이라 구글 공식 검증을 받지 않아서 그래요.<br/>
+        사내 출장 관리 앱이라 구글 공식 검증을 받지 않아서 그래요.<br/>
         <strong style="color:var(--accent)">절대 해킹이나 피싱이 아니니 안심하세요! 😊</strong>
       </div>
       <div style="background:var(--bg3);border-radius:var(--r-sm);padding:16px;text-align:left;margin-bottom:20px">
@@ -1813,48 +1813,70 @@ async function uploadToGDrive(file,token){
 }
 
 // ── GPS + REVERSE GEOCODE ─────────────────────────────────
-window.getGPSForField=(addressId,latId,lngId,statusId,btnId)=>{
+// Reverse geocode via Google Maps Geocoding API (REST) — works even before map loads
+async function reverseGeocodeCoords(lat, lng){
+  const MAPS_KEY = 'AIzaSyDIC4GsNnAaHBNVGa1utA4a_ZFy1pZaCTg';
+  // 1. Try Maps JS geocoder if available
+  if(window._geocoder){
+    return new Promise(resolve=>{
+      window._geocoder.geocode({location:{lat,lng},language:'ko'},(results,status)=>{
+        if(status==='OK'&&results[0]){
+          resolve(results[0].formatted_address);
+        } else { resolve(null); }
+      });
+    });
+  }
+  // 2. Fallback: REST API (works before map loads)
+  try {
+    const res = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=ko&key=${MAPS_KEY}`
+    );
+    const data = await res.json();
+    if(data.status==='OK' && data.results[0]){
+      return data.results[0].formatted_address;
+    }
+  } catch(e){ console.warn('Geocode REST failed:', e); }
+  return null;
+}
+
+window.getGPSForField=async(addressId,latId,lngId,statusId,btnId)=>{
   const btn=document.getElementById(btnId);
   const statusEl=document.getElementById(statusId);
   if(btn){btn.textContent='⏳';btn.disabled=true;}
-  if(statusEl) statusEl.textContent='GPS 위치 확인 중...';
+  if(statusEl) statusEl.textContent='📡 GPS 위치 확인 중...';
   if(!navigator.geolocation){
     if(statusEl) statusEl.textContent='GPS 미지원 브라우저입니다';
     if(btn){btn.textContent='📍 GPS';btn.disabled=false;}
     return;
   }
   navigator.geolocation.getCurrentPosition(
-    pos=>{
+    async pos=>{
       const lat=pos.coords.latitude;
       const lng=pos.coords.longitude;
       if(latId) document.getElementById(latId).value=lat;
       if(lngId) document.getElementById(lngId).value=lng;
-      if(btn){btn.textContent='✓';btn.disabled=false;}
-      // Reverse geocode
-      if(window._geocoder){
-        window._geocoder.geocode({location:{lat,lng}},(results,status)=>{
-          if(status==='OK'&&results[0]){
-            let country='',city='';
-            results[0].address_components.forEach(c=>{
-              if(c.types.includes('country')) country=c.long_name;
-              if((c.types.includes('locality')||c.types.includes('administrative_area_level_1'))&&!city) city=c.long_name;
-            });
-            const addr=[country,city].filter(Boolean).join(' ')||results[0].formatted_address;
-            document.getElementById(addressId).value=addr;
-            if(statusEl) statusEl.textContent='✓ '+addr;
-          } else {
-            if(statusEl) statusEl.textContent=`✓ 좌표: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-          }
-        });
+      if(statusEl) statusEl.textContent='🔍 주소 변환 중...';
+      // Reverse geocode — get full street address
+      const addr = await reverseGeocodeCoords(lat, lng);
+      if(addr){
+        document.getElementById(addressId).value=addr;
+        if(statusEl) statusEl.textContent='✓ '+addr;
+        if(btn){btn.textContent='✓';btn.disabled=false;}
       } else {
-        if(statusEl) statusEl.textContent=`📍 좌표 저장됨 (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+        // Fallback: coordinates only
+        const coordStr=`${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        document.getElementById(addressId).value=coordStr;
+        if(statusEl) statusEl.textContent='✓ 좌표 저장됨 (주소 변환 실패)';
+        if(btn){btn.textContent='✓';btn.disabled=false;}
       }
     },
-    ()=>{
+    err=>{
       if(btn){btn.textContent='📍 GPS';btn.disabled=false;}
-      if(statusEl) statusEl.textContent='❌ 위치 권한을 허용해주세요';
+      const msg = err.code===1?'위치 권한을 허용해주세요':
+                  err.code===2?'위치를 찾을 수 없습니다':'GPS 시간 초과';
+      if(statusEl) statusEl.textContent='❌ '+msg;
     },
-    {enableHighAccuracy:true,timeout:10000}
+    {enableHighAccuracy:true,timeout:15000,maximumAge:0}
   );
 };
 
