@@ -1575,7 +1575,7 @@ async function getValidGDriveToken(){
   // Token expired or missing — silent re-auth
   try {
     const silentProvider = new GoogleAuthProvider();
-    silentProvider.addScope('https://www.googleapis.com/auth/drive.file');
+    silentProvider.addScope('https://www.googleapis.com/auth/drive');
     // Try silent with current user first
     if(window._currentUser){
       silentProvider.setCustomParameters({login_hint: window._currentUser.email, prompt:'none'});
@@ -1598,8 +1598,7 @@ async function getValidGDriveToken(){
 
 window.connectGDrive=async()=>{
   const p = new GoogleAuthProvider();
-  p.addScope('https://www.googleapis.com/auth/drive.file');
-  // drive.file scope only — avoids unverified app warning
+  p.addScope('https://www.googleapis.com/auth/drive');
   try {
     const result=await signInWithPopup(auth, p);
     const credential=GoogleAuthProvider.credentialFromResult(result);
