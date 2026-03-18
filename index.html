@@ -261,7 +261,20 @@ textarea{resize:vertical;min-height:80px;}
   .stats-row .stat-box:last-child{grid-column:span 2;}
 }
 </style>
-<link rel="manifest" href="data:application/json,{%22name%22:%22BEAN%22,%22short_name%22:%22BEAN%22,%22start_url%22:%22.%22,%22display%22:%22standalone%22,%22background_color%22:%22%23ffffff%22,%22theme_color%22:%221E2761%22}"/>
+<link rel="manifest" id="pwa-manifest"/>
+<script>
+// Inject manifest as blob URL to avoid encoding issues
+(function(){
+  const manifest = {
+    name:"BEAN",short_name:"BEAN",
+    start_url:".",display:"standalone",
+    background_color:"#ffffff",theme_color:"#1E2761",
+    icons:[{src:"https://sunburn2061.github.io/BEAN/icon.png",sizes:"192x192",type:"image/png"}]
+  };
+  const blob = new Blob([JSON.stringify(manifest)],{type:'application/json'});
+  document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
+})();
+</script>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
 <meta name="apple-mobile-web-app-title" content="BEAN"/>
@@ -635,7 +648,7 @@ function copyBeanUrl(){
       <div style="font-size:13.5px;color:var(--muted);line-height:1.7;margin-bottom:20px">
         구글 드라이브 연결 시 구글이<br/>
         <strong style="color:var(--text)">"앱 미검증"</strong> 경고를 띄울 거예요.<br/><br/>
-        사내 출장 관리 앱이라 구글 공식 검증을 받지 않아서 그래요.<br/>
+        저희 사내 출장 관리 앱이라 구글 공식 검증을 받지 않아서 그래요.<br/>
         <strong style="color:var(--accent)">절대 해킹이나 피싱이 아니니 안심하세요! 😊</strong>
       </div>
       <div style="background:var(--bg3);border-radius:var(--r-sm);padding:16px;text-align:left;margin-bottom:20px">
