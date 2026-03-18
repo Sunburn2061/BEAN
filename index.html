@@ -722,7 +722,7 @@ function copyBeanUrl(){
       </select>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-secondary" onclick="closeModal('modal-receipt')">취소</button>
+      <button class="btn btn-secondary" onclick="resetReceiptModal()">취소</button>
       <button class="btn btn-primary" onclick="saveReceipt()">저장</button>
     </div>
   </div>
@@ -764,8 +764,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, onA
 import { getFirestore, collection, addDoc, deleteDoc, doc, setDoc, getDoc, getDocs,
   onSnapshot, serverTimestamp, query, orderBy, where, Timestamp }
   from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js';
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL }
-  from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-storage.js';
+// Firebase Storage not used — photos stored as base64 in Firestore or Google Drive
 
 const firebaseConfig = {
   apiKey:"AIzaSyDIC4GsNnAaHBNVGa1utA4a_ZFy1pZaCTg",
@@ -779,7 +778,7 @@ const firebaseConfig = {
 const app=initializeApp(firebaseConfig);
 const auth=getAuth(app);
 const db=getFirestore(app);
-const storage=getStorage(app);
+// storage removed
 const provider=new GoogleAuthProvider();
 const ADMIN_EMAIL='hyeree.lee@bakelacorp.com';
 const SOS_PHONE='+82-2-511-1913';
@@ -1288,8 +1287,13 @@ window.savePlace=async()=>{
   if(!name||!city){showToast('장소명과 도시는 필수입니다');return;}
   const photoURLs=[];
   for(const file of (window._placePhotoFiles||[])){
-    const s=await uploadBytes(storageRef(storage,`places/${Date.now()}_${file.name}`),file);
-    photoURLs.push(await getDownloadURL(s.ref));
+    if(window._gdriveToken){
+      try {
+        const driveFile=await uploadToGDrive(file,window._gdriveToken);
+        if(driveFile?.webViewLink) photoURLs.push(driveFile.webViewLink);
+      } catch(e){ console.warn('GDrive place photo failed:',e); }
+    }
+    // No storage used — photos only go to GDrive
   }
   const lat=parseFloat(document.getElementById('p-lat').value)||null;
   const lng=parseFloat(document.getElementById('p-lng').value)||null;
@@ -1355,34 +1359,31 @@ window.saveReceipt=async()=>{
     const amount=amountRaw?parseFloat(amountRaw):null;
 
     let photoURL=null;
+    let photoName=null;
     if(window._pendingReceiptFile){
-      try {
-        const path=`receipts/${window._currentUser?.uid||'anon'}/${Date.now()}_${window._pendingReceiptFile.name}`;
-        const s=await uploadBytes(storageRef(storage,path),window._pendingReceiptFile);
-        photoURL=await getDownloadURL(s.ref);
-        if(window._gdriveToken) uploadToGDrive(window._pendingReceiptFile,window._gdriveToken).catch(console.warn);
-      } catch(uploadErr){
-        console.warn('Photo upload failed, saving without photo:', uploadErr);
-        // Continue saving without photo — don't block the user
+      photoName=window._pendingReceiptFile.name;
+      if(window._gdriveToken){
+        try {
+          const driveFile=await uploadToGDrive(window._pendingReceiptFile,window._gdriveToken);
+          photoURL=driveFile?.webViewLink||null;
+        } catch(e){ console.warn('GDrive upload failed:',e); }
       }
+      // If no GDrive, just record the filename — no storage used
     }
 
     await addDoc(collection(db,'receipts'),{
       shop,amount,cat:document.getElementById('r-cat').value,
       currency:document.getElementById('r-currency').value,
       date:document.getElementById('r-date').value||new Date().toISOString().slice(0,10),
-      photoURL,uid:window._currentUser?.uid,
+      photoURL, photoName,
+      hasDrivePhoto: !!(photoURL),
+      uid:window._currentUser?.uid,
       by:window._profile?.name||window._currentUser?.displayName,ts:serverTimestamp()
     });
 
+    resetReceiptModal();
+    showToast('🧾 영수증 저장됨' + (photoURL?' (드라이브 저장됨)':window._pendingReceiptFile?' (드라이브 미연결 — 사진 미저장)':''));
     window._pendingReceiptFile=null;
-    document.getElementById('receipt-preview-img').style.display='none';
-    document.getElementById('receipt-upload-status').textContent='';
-    document.getElementById('receipt-drop-ico').textContent='📷';
-    document.getElementById('r-shop').value='';
-    document.getElementById('r-amount').value='';
-    closeModal('modal-receipt');
-    showToast('🧾 영수증 저장됨');
   } catch(e){
     console.error('saveReceipt error:', e);
     showToast('❌ 저장 실패: ' + (e.message||'다시 시도해주세요'));
@@ -1395,6 +1396,20 @@ window.delReceipt=async id=>{
   if(!confirm('삭제하시겠습니까?')) return;
   await deleteDoc(doc(db,'receipts',id));
   showToast('삭제됨');
+};
+
+window.resetReceiptModal=()=>{
+  window._pendingReceiptFile=null;
+  document.getElementById('receipt-preview-img').style.display='none';
+  document.getElementById('receipt-preview-img').src='';
+  document.getElementById('receipt-upload-status').textContent='';
+  document.getElementById('receipt-drop-ico').textContent='📷';
+  document.getElementById('r-shop').value='';
+  document.getElementById('r-amount').value='';
+  document.getElementById('r-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('receipt-file-input').value='';
+  document.getElementById('receipt-dropzone').classList.remove('drag');
+  closeModal('modal-receipt');
 };
 
 window.processReceiptPhoto=file=>{
@@ -1426,9 +1441,11 @@ function renderReceipts() {
   const currency=withAmount[0]?.currency||'KRW';
   document.getElementById('r-total').textContent=total?total.toLocaleString()+' '+currency:'—';
   document.getElementById('receipts-list').innerHTML=receipts.map(r=>{
-    const thumbHtml=r.photoURL
-      ?`<img class="ri-thumb" src="${r.photoURL}" onclick="openLightbox('${r.photoURL}')" alt=""/>`
-      :`<div class="ri-thumb-placeholder">📄</div>`;
+    const thumbHtml=r.hasDrivePhoto&&r.photoURL
+      ?`<a href="${r.photoURL}" target="_blank" class="ri-thumb" style="display:flex;align-items:center;justify-content:center;background:#E8F0FE;text-decoration:none;font-size:20px" title="구글 드라이브에서 보기">📁</a>`
+      :r.photoName
+        ?`<div class="ri-thumb-placeholder" title="${r.photoName}">🖼️</div>`
+        :`<div class="ri-thumb-placeholder">📄</div>`;
     return `<div class="receipt-item">
       ${thumbHtml}
       <div class="ri-info">
@@ -1481,13 +1498,25 @@ function updateGDriveUI(connected){
 }
 
 async function uploadToGDrive(file,token){
-  const metadata={name:`BEAN_receipt_${Date.now()}_${file.name}`,parents:['root']};
+  const metadata={
+    name:`BEAN_${Date.now()}_${file.name}`,
+    parents:['root']
+  };
   const form=new FormData();
   form.append('metadata',new Blob([JSON.stringify(metadata)],{type:'application/json'}));
   form.append('file',file);
-  await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',{
+  const res=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',{
     method:'POST',headers:{Authorization:'Bearer '+token},body:form
   });
+  if(!res.ok) throw new Error('GDrive upload failed: '+res.status);
+  const data=await res.json();
+  // Make file readable by link
+  await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`,{
+    method:'POST',
+    headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify({role:'reader',type:'anyone'})
+  }).catch(()=>{});
+  return data;
 }
 
 // ── GPS + REVERSE GEOCODE ─────────────────────────────────
@@ -1777,13 +1806,13 @@ window.refreshMapMarkers=function(){
       map:window._map,
       title:s.name,
       label:{
-        text:s.name?s.name.slice(0,2):'?',
-        color:'#ffffff',fontSize:'11px',fontWeight:'bold',
+        text:s.name||'?',
+        color:'#ffffff',fontSize:'10px',fontWeight:'bold',
         fontFamily:"'Noto Sans KR',sans-serif"
       },
       icon:{
         path:google.maps.SymbolPath.CIRCLE,
-        scale:22,
+        scale:28,
         fillColor:'#DC2626',
         fillOpacity:1,
         strokeColor:'#fff',
