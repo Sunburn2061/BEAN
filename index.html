@@ -1132,28 +1132,54 @@ window.switchCheckinTab=tab=>{
 async function renderTeamCheckins() {
   const el=document.getElementById('team-checkin-list');
   try {
-    const snap=await getDocs(query(collection(db,'team_status')));
-    if(snap.empty){el.innerHTML='<div class="empty-state"><div class="ico">👥</div>팀원 체크인 정보가 없습니다</div>';return;}
+    // Load all latest checkins per user (from team_status) + recent checkin docs
+    const [statusSnap, ciSnap] = await Promise.all([
+      getDocs(collection(db,'team_status')),
+      getDocs(query(collection(db,'checkins'), orderBy('ts','desc')))
+    ]);
+    if(statusSnap.empty){el.innerHTML='<div class="empty-state"><div class="ico">👥</div>팀원 체크인 정보가 없습니다</div>';return;}
     const today=new Date().toISOString().slice(0,10);
-    el.innerHTML=snap.docs.map(d=>{
-      const s=d.data();
+    const admin=isAdmin();
+    // Group checkins by uid for recent history
+    const ciByUser={};
+    ciSnap.docs.forEach(d=>{
+      const r=d.data(); if(!ciByUser[r.uid]) ciByUser[r.uid]=[];
+      if(ciByUser[r.uid].length<3) ciByUser[r.uid].push({id:d.id,...r});
+    });
+    el.innerHTML=statusSnap.docs.map(d=>{
+      const s=d.data(); const uid=d.id;
       const checkedToday=s.ts?.toDate&&s.ts.toDate().toISOString().slice(0,10)===today;
       const t=s.ts?.toDate?s.ts.toDate().toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
       const init=(s.name||'?').slice(0,2);
       const avHtml=s.photoURL?`<img src="${s.photoURL}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`:`${init}`;
-      return `<div class="team-row">
-        <div class="t-av">${avHtml}</div>
-        <div class="t-info">
-          <div class="t-name">${s.name||'이름없음'}</div>
-          <div class="t-meta">${[s.team,s.role].filter(Boolean).join(' · ')} ${s.location?'· '+s.location:''}</div>
+      const recentCi=ciByUser[uid]||[];
+      const ciHistory=recentCi.map(ci=>{
+        const ct=ci.ts?.toDate?ci.ts.toDate().toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+        const ico=ci.type==='arrive'?'📍':'🏠';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--border)">
+          <span style="font-size:12px">${ico}</span>
+          <span style="font-size:12px;flex:1">${ci.location||''}</span>
+          <span style="font-size:10.5px;color:var(--muted2);font-family:'DM Mono',monospace">${ct}</span>
+          ${admin?`<button class="btn btn-secondary btn-xs" onclick="adminEditCheckin('${ci.id}','${(ci.location||'').replace(/'/g,"\'")}','${(ci.note||'').replace(/'/g,"\'")}')">✏️</button>
+          <button class="btn btn-danger btn-xs" onclick="adminDeleteCheckin('${ci.id}')">🗑</button>`:''}
+        </div>`;
+      }).join('');
+      return `<div class="card" style="margin-bottom:10px;padding:14px 16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:${recentCi.length?'10px':'0'}">
+          <div class="t-av">${avHtml}</div>
+          <div style="flex:1">
+            <div class="t-name">${s.name||'이름없음'}</div>
+            <div class="t-meta">${[s.team,s.role].filter(Boolean).join(' · ')}${s.location?' · '+s.location:''}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+            <span class="badge ${checkedToday?'b-green':'b-amber'}"><span class="bdot"></span>${checkedToday?'체크인':'미완료'}</span>
+            <span style="font-size:10.5px;color:var(--muted2)">${t}</span>
+          </div>
         </div>
-        <div class="t-right">
-          <span class="badge ${checkedToday?'b-green':'b-amber'}"><span class="bdot"></span>${checkedToday?'체크인':'미완료'}</span>
-          <span style="font-size:10.5px;color:var(--muted2)">${t}</span>
-        </div>
+        ${ciHistory}
       </div>`;
     }).join('');
-  } catch(e){ el.innerHTML='<div class="empty-state">데이터를 불러오지 못했습니다</div>'; }
+  } catch(e){ console.error(e); el.innerHTML='<div class="empty-state">데이터를 불러오지 못했습니다</div>'; }
 }
 
 async function renderTeamTrips() {
@@ -1162,25 +1188,34 @@ async function renderTeamTrips() {
     const snap=await getDocs(query(collection(db,'trips'),orderBy('start','desc')));
     if(snap.empty){el.innerHTML='<div class="empty-state"><div class="ico">✈️</div>등록된 팀 출장이 없습니다</div>';return;}
     const today=new Date().toISOString().slice(0,10);
+    const admin=isAdmin();
     el.innerHTML=snap.docs.map(d=>{
-      const t=d.data();
+      const t=d.data(); const tripId=d.id;
       const active=today>=t.start&&today<=t.end;
       const sched=today<t.start;
       const status=active?'진행중':(sched?'예정':'완료');
       const bclass=active?'b-green':(sched?'b-amber':'b-gray');
-      return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+      return `<div class="card" style="margin-bottom:10px;padding:14px 16px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div>
-            <div style="font-size:13.5px;font-weight:600">${t.name||'이름없음'}</div>
-            <div style="font-size:12px;color:var(--muted);margin-top:2px">${t.country}${t.city?', '+t.city:''}</div>
-            ${t.purpose?`<div style="font-size:11.5px;color:var(--muted2);margin-top:1px">${t.purpose}</div>`:''}
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:700">${t.name||'이름없음'}</div>
+            <div style="font-size:12.5px;color:var(--muted);margin-top:2px">
+              ${t.country}${t.city?', '+t.city:''}
+            </div>
+            ${t.purpose?`<div style="font-size:11.5px;color:var(--muted2);margin-top:2px">${t.purpose}</div>`:''}
+            <div style="font-size:11.5px;color:var(--muted);margin-top:6px">📅 ${t.start} ~ ${t.end}</div>
           </div>
-          <span class="badge ${bclass}">${status}</span>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <span class="badge ${bclass}">${status}</span>
+            ${admin?`<div style="display:flex;gap:4px;margin-top:4px">
+              <button class="btn btn-secondary btn-xs" onclick="adminEditTrip('${tripId}')">✏️ 수정</button>
+              <button class="btn btn-danger btn-xs" onclick="adminDeleteTrip('${tripId}','${(t.name||'').replace(/'/g,"\'")}')">🗑</button>
+            </div>`:''}
+          </div>
         </div>
-        <div style="font-size:11.5px;color:var(--muted);margin-top:6px">📅 ${t.start} ~ ${t.end}</div>
       </div>`;
     }).join('');
-  } catch(e){ el.innerHTML='<div class="empty-state">데이터를 불러오지 못했습니다</div>'; }
+  } catch(e){ console.error(e); el.innerHTML='<div class="empty-state">데이터를 불러오지 못했습니다</div>'; }
 }
 
 // ── LISTENERS ────────────────────────────────────────────
@@ -1854,6 +1889,60 @@ window.deleteCheckin=async(docId)=>{
   if(!confirm('이 체크인 기록을 삭제하시겠습니까?')) return;
   await deleteDoc(doc(db,'checkins',docId));
   showToast('삭제됨');
+};
+
+
+// ── ALL USERS CAN EDIT ───────────────────────────────────
+function isAdmin(){
+  return !!window._currentUser; // everyone can edit
+}
+
+// ── ADMIN: CHECKIN EDIT/DELETE ────────────────────────────
+window.adminEditCheckin=async(docId, location, note)=>{
+  document.getElementById('ci-edit-id').value=docId;
+  document.getElementById('ci-edit-location').value=location||'';
+  document.getElementById('ci-edit-note').value=note||'';
+  openModal('modal-checkin-edit');
+};
+
+window.adminDeleteCheckin=async(docId)=>{
+  if(!confirm('이 체크인 기록을 삭제하시겠습니까?')) return;
+  try {
+    await deleteDoc(doc(db,'checkins',docId));
+    showToast('✓ 체크인 기록 삭제됨');
+    renderTeamCheckins();
+  } catch(e){ showToast('삭제 실패: '+e.message); }
+};
+
+// ── ADMIN: TRIP EDIT/DELETE ───────────────────────────────
+window.adminEditTrip=async(tripId)=>{
+  try {
+    const snap=await getDoc(doc(db,'trips',tripId));
+    if(!snap.exists()) return;
+    const t=snap.data();
+    // Reuse the trip modal — set edit ID
+    document.getElementById('trip-edit-id').value=tripId;
+    document.getElementById('trip-country').value=t.country||'';
+    document.getElementById('trip-city').value=t.city||'';
+    document.getElementById('trip-purpose').value=t.purpose||'';
+    document.getElementById('trip-start').value=t.start||'';
+    document.getElementById('trip-end').value=t.end||'';
+    document.getElementById('modal-trip-title').textContent=`✏️ 출장 수정 (${t.name||''})`;
+    openModal('modal-trip');
+  } catch(e){ showToast('불러오기 실패: '+e.message); }
+};
+
+window.adminDeleteTrip=async(tripId, name)=>{
+  if(!confirm(`"${name}"의 출장 기록을 삭제하시겠습니까?`)) return;
+  try {
+    await deleteDoc(doc(db,'trips',tripId));
+    showToast('✓ 출장 기록 삭제됨');
+    renderTeamTrips();
+    // If deleted own trip, reload
+    if(window._myTrip && (window._myTrips||[]).find(t=>t.id===tripId)){
+      loadMyTrips();
+    }
+  } catch(e){ showToast('삭제 실패: '+e.message); }
 };
 
 // ── MODAL ─────────────────────────────────────────────────
