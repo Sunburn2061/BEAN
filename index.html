@@ -561,8 +561,8 @@ function copyBeanUrl(){
             <div style="font-size:11.5px;color:var(--muted)">개인 드라이브에 영수증 사진을 저장합니다</div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn btn-secondary btn-sm" id="btn-gdrive-connect" onclick="connectGDrive()">🔗 연결하기</button>
-            <button class="btn btn-secondary btn-sm" id="btn-gdrive-reconnect" style="display:none" onclick="connectGDrive()">🔄 재연결</button>
+            <button class="btn btn-secondary btn-sm" id="btn-gdrive-connect" onclick="showDriveConnectGuide()">🔗 연결하기</button>
+            <button class="btn btn-secondary btn-sm" id="btn-gdrive-reconnect" style="display:none" onclick="showDriveConnectGuide()">🔄 재연결</button>
             <button class="btn btn-danger btn-sm" id="btn-gdrive-disconnect" style="display:none" onclick="disconnectGDrive()">연결 해제</button>
           </div>
         </div>
@@ -617,6 +617,47 @@ function copyBeanUrl(){
       <button class="modal-close" onclick="closeModal('modal-staff-list')">✕</button>
     </div>
     <div id="staff-list-body"></div>
+  </div>
+</div>
+
+<!-- ══ MODAL: 드라이브 연결 안내 ══ -->
+<div class="overlay" id="modal-drive-guide">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-hdr">
+      <span class="modal-title">📁 구글 드라이브 연결</span>
+      <button class="modal-close" onclick="closeModal('modal-drive-guide')">✕</button>
+    </div>
+    <div style="text-align:center;padding:8px 0 16px">
+      <div style="font-size:40px;margin-bottom:12px">🙋</div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:8px;color:var(--text)">
+        잠깐, 저 혜소컨입니다!
+      </div>
+      <div style="font-size:13.5px;color:var(--muted);line-height:1.7;margin-bottom:20px">
+        구글 드라이브 연결 시 구글이<br/>
+        <strong style="color:var(--text)">"앱 미검증"</strong> 경고를 띄울 거예요.<br/><br/>
+        무료버전 + 초기 개발 단계라 발생하는 문제입니다...^^<br/>
+        <strong style="color:var(--accent)">절대 해킹이나 피싱이 아니니 안심하세요! 😊</strong>
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--r-sm);padding:16px;text-align:left;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">연결 방법</div>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">
+          <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">1</div>
+          <div style="font-size:13px;color:var(--text)">아래 <strong>"연결 시작"</strong> 버튼 클릭</div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">
+          <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">2</div>
+          <div style="font-size:13px;color:var(--text)">경고 화면에서 왼쪽 아래<br/><strong>"Advanced"</strong> 클릭</div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">3</div>
+          <div style="font-size:13px;color:var(--text)"><strong>"Go to sunburn2061.github.io (unsafe)"</strong> 클릭</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" style="flex:1;justify-content:center" onclick="closeModal('modal-drive-guide')">나중에</button>
+        <button class="btn btn-primary" style="flex:1;justify-content:center" onclick="startDriveConnect()">연결 시작 →</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1595,6 +1636,15 @@ async function getValidGDriveToken(){
   }
   return null;
 }
+
+window.showDriveConnectGuide=()=>{
+  openModal('modal-drive-guide');
+};
+
+window.startDriveConnect=async()=>{
+  closeModal('modal-drive-guide');
+  await connectGDrive();
+};
 
 window.connectGDrive=async()=>{
   const p = new GoogleAuthProvider();
