@@ -437,9 +437,21 @@ function copyBeanUrl(){
         <button class="btn btn-primary" onclick="openNewTripModal()">+ 출장 정보 등록</button>
       </div>
       <div class="stats-row">
-        <div class="stat-box"><div class="stat-val" id="stat-total">—</div><div class="stat-lbl">출장 중 직원</div></div>
-        <div class="stat-box"><div class="stat-val" style="color:var(--green)" id="stat-safe">—</div><div class="stat-lbl">오늘 체크인</div></div>
-        <div class="stat-box"><div class="stat-val" style="color:var(--amber)" id="stat-over">—</div><div class="stat-lbl">미완료</div></div>
+        <div class="stat-box" onclick="showStaffList('total')" style="cursor:pointer">
+          <div class="stat-val" id="stat-total">—</div>
+          <div class="stat-lbl">출장 중 직원</div>
+          <div style="font-size:10px;color:var(--accent);margin-top:4px">명단 보기 →</div>
+        </div>
+        <div class="stat-box" onclick="showStaffList('safe')" style="cursor:pointer">
+          <div class="stat-val" style="color:var(--green)" id="stat-safe">—</div>
+          <div class="stat-lbl">오늘 체크인</div>
+          <div style="font-size:10px;color:var(--accent);margin-top:4px">명단 보기 →</div>
+        </div>
+        <div class="stat-box" onclick="showStaffList('over')" style="cursor:pointer">
+          <div class="stat-val" style="color:var(--amber)" id="stat-over">—</div>
+          <div class="stat-lbl">미완료</div>
+          <div style="font-size:10px;color:var(--accent);margin-top:4px">명단 보기 →</div>
+        </div>
       </div>
       <!-- Map integrated into home -->
       <div class="card" style="padding:14px">
@@ -546,12 +558,18 @@ function copyBeanUrl(){
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <div style="flex:1;min-width:180px">
             <div style="font-size:12.5px;font-weight:600;margin-bottom:4px">📁 구글 드라이브 연결</div>
-            <div style="font-size:11.5px;color:var(--muted)">개인 계정 드라이브에 영수증을 자동 저장합니다</div>
+            <div style="font-size:11.5px;color:var(--muted)">개인 드라이브에 영수증 사진을 저장합니다</div>
           </div>
-          <button class="btn btn-secondary btn-sm" id="btn-gdrive-connect" onclick="connectGDrive()">🔗 연결하기</button>
-          <button class="btn btn-danger btn-sm" id="btn-gdrive-disconnect" style="display:none" onclick="disconnectGDrive()">연결 해제</button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" id="btn-gdrive-connect" onclick="connectGDrive()">🔗 연결하기</button>
+            <button class="btn btn-secondary btn-sm" id="btn-gdrive-reconnect" style="display:none" onclick="connectGDrive()">🔄 재연결</button>
+            <button class="btn btn-danger btn-sm" id="btn-gdrive-disconnect" style="display:none" onclick="disconnectGDrive()">연결 해제</button>
+          </div>
         </div>
         <div id="gdrive-folder-info" style="display:none;margin-top:10px;padding:8px 12px;background:var(--green-light);border-radius:var(--r-xs);font-size:12px;color:var(--green)"></div>
+        <div id="gdrive-token-status" style="display:none;margin-top:8px;padding:6px 10px;background:var(--amber-light);border-radius:var(--r-xs);font-size:11.5px;color:var(--amber)">
+          ⚠️ 토큰이 만료되었습니다. 영수증 추가 시 자동으로 재인증됩니다.
+        </div>
       </div>
       <div class="card">
         <div class="card-title" style="margin-bottom:12px">영수증 목록</div>
@@ -561,6 +579,45 @@ function copyBeanUrl(){
 
   </div>
 </div>
+</div>
+
+<!-- ══ MODAL: 구글 드라이브 폴더 ══ -->
+<div class="overlay" id="modal-gdrive-folder">
+  <div class="modal">
+    <div class="modal-hdr">
+      <span class="modal-title">📁 저장 폴더 설정</span>
+      <button class="modal-close" onclick="closeModal('modal-gdrive-folder')">✕</button>
+    </div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px">영수증 사진이 저장될 구글 드라이브 폴더를 선택하거나 새로 만드세요.</div>
+    <!-- New folder -->
+    <div class="field">
+      <label class="label">새 폴더 만들기</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="new-folder-name" placeholder="예: BEAN 영수증" style="flex:1"/>
+        <button class="btn btn-primary btn-sm" onclick="createDriveFolder()">만들기</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 12px">
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+      <div style="font-size:12px;color:var(--muted)">또는 기존 폴더 선택</div>
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="loadDriveFolders()" style="margin-bottom:10px;width:100%;justify-content:center">🔄 폴더 목록 불러오기</button>
+    <div id="drive-folder-list" style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r-sm);padding:4px">
+      <div style="color:var(--muted);font-size:13px;padding:12px;text-align:center">위 버튼을 눌러 폴더 목록을 불러오세요</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: 직원 명단 ══ -->
+<div class="overlay" id="modal-staff-list">
+  <div class="modal">
+    <div class="modal-hdr">
+      <span class="modal-title" id="staff-list-title">직원 명단</span>
+      <button class="modal-close" onclick="closeModal('modal-staff-list')">✕</button>
+    </div>
+    <div id="staff-list-body"></div>
+  </div>
 </div>
 
 <!-- BOTTOM NAV -->
@@ -625,6 +682,23 @@ function copyBeanUrl(){
     <div class="modal-foot">
       <button class="btn btn-secondary" onclick="closeModal('modal-checkin')">취소</button>
       <button class="btn btn-primary" onclick="submitCheckin()">체크인</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: 체크인 수정 ══ -->
+<div class="overlay" id="modal-checkin-edit">
+  <div class="modal">
+    <div class="modal-hdr"><span class="modal-title">✏️ 체크인 수정</span><button class="modal-close" onclick="closeModal('modal-checkin-edit')">✕</button></div>
+    <input type="hidden" id="ci-edit-id"/>
+    <div class="field">
+      <label class="label">위치 *</label>
+      <input type="text" id="ci-edit-location" placeholder="예: 일본 도쿄"/>
+    </div>
+    <div class="field"><label class="label">메모</label><input type="text" id="ci-edit-note" placeholder="특이사항"/></div>
+    <div class="modal-foot">
+      <button class="btn btn-secondary" onclick="closeModal('modal-checkin-edit')">취소</button>
+      <button class="btn btn-primary" onclick="saveCheckinEdit()">저장</button>
     </div>
   </div>
 </div>
@@ -1160,6 +1234,11 @@ function startListeners() {
             <div class="hist-meta">${r.note||''}</div>
           </div>
           <div class="hist-time">${t}</div>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:4px">
+            <button class="btn btn-secondary btn-xs" onclick="editCheckin('${docId}')">✏️</button>
+            <button class="btn btn-danger btn-xs" onclick="deleteCheckin('${docId}')">🗑</button>
+          </div>
         </div>`;
       }).join('');
     });
@@ -1362,13 +1441,29 @@ window.saveReceipt=async()=>{
     let photoName=null;
     if(window._pendingReceiptFile){
       photoName=window._pendingReceiptFile.name;
-      if(window._gdriveToken){
+      // Get valid token (auto-refresh if expired)
+      const token = await getValidGDriveToken();
+      if(token){
+        window._gdriveToken = token;
         try {
-          const driveFile=await uploadToGDrive(window._pendingReceiptFile,window._gdriveToken);
+          showToast('📁 드라이브에 업로드 중...');
+          const driveFile=await uploadToGDrive(window._pendingReceiptFile, token);
           photoURL=driveFile?.webViewLink||null;
-        } catch(e){ console.warn('GDrive upload failed:',e); }
+          showToast('✓ 드라이브 저장 완료!');
+        } catch(e){
+          console.error('GDrive upload failed:',e);
+          if(e.message.includes('401')||e.message.includes('403')){
+            // Token truly expired even after refresh — prompt manual reconnect
+            showToast('🔄 드라이브 재연결 후 다시 시도해주세요');
+            updateGDriveUI(false);
+          } else {
+            showToast('⚠️ 드라이브 업로드 실패 — 텍스트만 저장됩니다');
+          }
+        }
+      } else if(localStorage.getItem('gdrive_folder_id')){
+        // Was connected before but token gone — show reconnect button
+        showToast('🔄 드라이브 재연결이 필요합니다. 사진 없이 저장됩니다.');
       }
-      // If no GDrive, just record the filename — no storage used
     }
 
     await addDoc(collection(db,'receipts'),{
@@ -1442,10 +1537,11 @@ function renderReceipts() {
   document.getElementById('r-total').textContent=total?total.toLocaleString()+' '+currency:'—';
   document.getElementById('receipts-list').innerHTML=receipts.map(r=>{
     const thumbHtml=r.hasDrivePhoto&&r.photoURL
-      ?`<a href="${r.photoURL}" target="_blank" class="ri-thumb" style="display:flex;align-items:center;justify-content:center;background:#E8F0FE;text-decoration:none;font-size:20px" title="구글 드라이브에서 보기">📁</a>`
-      :r.photoName
-        ?`<div class="ri-thumb-placeholder" title="${r.photoName}">🖼️</div>`
-        :`<div class="ri-thumb-placeholder">📄</div>`;
+      ?`<a href="${r.photoURL}" target="_blank" style="width:44px;height:44px;border-radius:8px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#E8F0FE;text-decoration:none;border:1px solid #C5D9F7;gap:1px" title="구글 드라이브에서 보기">
+          <span style="font-size:18px">📁</span>
+          <span style="font-size:9px;color:#1967D2;font-weight:600">Drive</span>
+        </a>`
+      :`<div class="ri-thumb-placeholder">📄</div>`;
     return `<div class="receipt-item">
       ${thumbHtml}
       <div class="ri-info">
@@ -1461,61 +1557,200 @@ function renderReceipts() {
 }
 
 // ── GDRIVE ────────────────────────────────────────────────
-window.connectGDrive=async()=>{
-  provider.addScope('https://www.googleapis.com/auth/drive.file');
+// ── GDRIVE TOKEN MANAGEMENT ───────────────────────────────
+// Token expires in 1hr — we store expiry and auto-refresh on demand
+
+async function getValidGDriveToken(){
+  const expiry = parseInt(localStorage.getItem('gdrive_token_expiry')||'0');
+  const now = Date.now();
+  // If token valid for >5 more minutes, reuse it
+  if(window._gdriveToken && expiry > now + 5*60*1000){
+    return window._gdriveToken;
+  }
+  // Token expired or missing — silent re-auth
   try {
-    const result=await signInWithPopup(auth,provider);
+    const silentProvider = new GoogleAuthProvider();
+    silentProvider.addScope('https://www.googleapis.com/auth/drive.file');
+    silentProvider.addScope('https://www.googleapis.com/auth/drive');
+    // Try silent with current user first
+    if(window._currentUser){
+      silentProvider.setCustomParameters({login_hint: window._currentUser.email, prompt:'none'});
+    }
+    const result = await signInWithPopup(auth, silentProvider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    const token = credential?.accessToken;
+    if(token){
+      window._gdriveToken = token;
+      // Store with 55min expiry (token lasts 60min)
+      localStorage.setItem('gdrive_token', token);
+      localStorage.setItem('gdrive_token_expiry', String(Date.now() + 55*60*1000));
+      return token;
+    }
+  } catch(e){
+    console.warn('Silent re-auth failed:', e.code);
+  }
+  return null;
+}
+
+window.connectGDrive=async()=>{
+  const p = new GoogleAuthProvider();
+  p.addScope('https://www.googleapis.com/auth/drive.file');
+  p.addScope('https://www.googleapis.com/auth/drive');
+  try {
+    const result=await signInWithPopup(auth, p);
     const credential=GoogleAuthProvider.credentialFromResult(result);
-    window._gdriveToken=credential?.accessToken;
-    if(window._gdriveToken){
-      localStorage.setItem('gdrive_token',window._gdriveToken);
+    const token=credential?.accessToken;
+    if(token){
+      window._gdriveToken=token;
+      localStorage.setItem('gdrive_token', token);
+      localStorage.setItem('gdrive_token_expiry', String(Date.now() + 55*60*1000));
       updateGDriveUI(true);
       showToast('✓ 구글 드라이브 연결됨');
+      setTimeout(()=>openModal('modal-gdrive-folder'), 500);
     }
   } catch(e){ showToast('드라이브 연결 실패: '+e.message); }
 };
 
+window.openFolderSetup=()=>{
+  if(!window._gdriveToken){ showToast('먼저 구글 드라이브를 연결해주세요'); return; }
+  openModal('modal-gdrive-folder');
+};
+
+window.loadDriveFolders=async()=>{
+  const el=document.getElementById('drive-folder-list');
+  el.innerHTML='<div style="color:var(--muted);font-size:13px;padding:8px">폴더 목록 불러오는 중...</div>';
+  try {
+    const res=await fetch(
+      "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)&orderBy=name",
+      {headers:{Authorization:'Bearer '+window._gdriveToken}}
+    );
+    const data=await res.json();
+    const folders=data.files||[];
+    el.innerHTML=folders.length
+      ? folders.map(f=>`<div class="folder-item" onclick="selectDriveFolder('${f.id}','${f.name.replace(/'/g,"\'")}')" style="padding:10px 12px;border-radius:var(--r-xs);cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .15s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
+        <span style="font-size:18px">📁</span><span style="font-size:13.5px">${f.name}</span></div>`).join('')
+      : '<div style="color:var(--muted);font-size:13px;padding:8px">폴더가 없습니다. 새 폴더를 만들어주세요.</div>';
+  } catch(e){
+    el.innerHTML='<div style="color:var(--red);font-size:13px;padding:8px">폴더 목록을 불러오지 못했습니다</div>';
+  }
+};
+
+window.createDriveFolder=async()=>{
+  const name=document.getElementById('new-folder-name').value.trim();
+  if(!name){ showToast('폴더 이름을 입력해주세요'); return; }
+  try {
+    const res=await fetch('https://www.googleapis.com/drive/v3/files',{
+      method:'POST',
+      headers:{Authorization:'Bearer '+window._gdriveToken,'Content-Type':'application/json'},
+      body:JSON.stringify({name,mimeType:'application/vnd.google-apps.folder'})
+    });
+    const data=await res.json();
+    selectDriveFolder(data.id, name);
+    showToast('✓ 폴더 생성됨: '+name);
+  } catch(e){ showToast('폴더 생성 실패'); }
+};
+
+window.selectDriveFolder=(folderId,folderName)=>{
+  window._gdriveFolderId=folderId;
+  window._gdriveFolderName=folderName;
+  localStorage.setItem('gdrive_folder_id',folderId);
+  localStorage.setItem('gdrive_folder_name',folderName);
+  closeModal('modal-gdrive-folder');
+  updateGDriveUI(true);
+  showToast('✓ 폴더 선택됨: '+folderName);
+};
+
 window.disconnectGDrive=()=>{
   window._gdriveToken=null;
-  localStorage.removeItem('gdrive_token');
+  window._gdriveFolderId=null;
+  window._gdriveFolderName=null;
+  ['gdrive_token','gdrive_token_expiry','gdrive_folder_id','gdrive_folder_name']
+    .forEach(k=>localStorage.removeItem(k));
   updateGDriveUI(false);
   showToast('구글 드라이브 연결 해제됨');
 };
 
 function loadGDriveStatus(){
   const token=localStorage.getItem('gdrive_token');
-  if(token){window._gdriveToken=token;updateGDriveUI(true);}
-  else updateGDriveUI(false);
+  const expiry=parseInt(localStorage.getItem('gdrive_token_expiry')||'0');
+  const folderId=localStorage.getItem('gdrive_folder_id');
+  const folderName=localStorage.getItem('gdrive_folder_name');
+  if(token && expiry > Date.now()){
+    window._gdriveToken=token;
+    window._gdriveFolderId=folderId||null;
+    window._gdriveFolderName=folderName||null;
+    updateGDriveUI(true);
+  } else if(token){
+    // Token stored but expired — keep folder info, clear token
+    window._gdriveToken=null;
+    window._gdriveFolderId=folderId||null;
+    window._gdriveFolderName=folderName||null;
+    localStorage.removeItem('gdrive_token');
+    localStorage.removeItem('gdrive_token_expiry');
+    updateGDriveUI(false);
+    // Show reconnect hint
+    setTimeout(()=>showToast('🔄 구글 드라이브 재연결이 필요합니다'),1500);
+  } else { updateGDriveUI(false); }
 }
 
 function updateGDriveUI(connected){
-  document.getElementById('r-drive-status').textContent=connected?'연결됨':'미연결';
-  document.getElementById('btn-gdrive-connect').style.display=connected?'none':'inline-flex';
-  document.getElementById('btn-gdrive-disconnect').style.display=connected?'inline-flex':'none';
+  const folderName=window._gdriveFolderName;
+  const hasFolder=!!(folderName||localStorage.getItem('gdrive_folder_name'));
+  // connected = token valid; hasFolder = was connected before
+  document.getElementById('r-drive-status').textContent=
+    connected?(folderName||'연결됨'):(hasFolder?'재연결 필요':'미연결');
+  document.getElementById('btn-gdrive-connect').style.display=
+    (!connected&&!hasFolder)?'inline-flex':'none';
+  document.getElementById('btn-gdrive-reconnect').style.display=
+    (!connected&&hasFolder)?'inline-flex':'none';
+  document.getElementById('btn-gdrive-disconnect').style.display=
+    connected?'inline-flex':'none';
   const info=document.getElementById('gdrive-folder-info');
-  if(connected){info.style.display='block';info.textContent='✓ 영수증 사진이 개인 Google Drive에 자동 저장됩니다';}
-  else info.style.display='none';
+  const statusDiv=document.getElementById('gdrive-token-status');
+  if(connected){
+    info.style.display='block';
+    const fn=folderName||localStorage.getItem('gdrive_folder_name');
+    info.innerHTML=fn
+      ?`✓ 저장 폴더: 📁 <strong>${fn}</strong> <button onclick="openFolderSetup()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;padding:0 4px">변경</button>`
+      :`✓ 드라이브 연결됨 <button onclick="openFolderSetup()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;padding:0 4px">📁 폴더 선택</button>`;
+    if(statusDiv) statusDiv.style.display='none';
+  } else {
+    if(hasFolder){
+      info.style.display='none';
+      if(statusDiv) statusDiv.style.display='block';
+    } else {
+      info.style.display='none';
+      if(statusDiv) statusDiv.style.display='none';
+    }
+  }
 }
 
 async function uploadToGDrive(file,token){
+  const folderId=window._gdriveFolderId||null;
   const metadata={
-    name:`BEAN_${Date.now()}_${file.name}`,
-    parents:['root']
+    name:`BEAN_${new Date().toISOString().slice(0,10)}_${file.name}`,
+    parents: folderId ? [folderId] : ['root']
   };
   const form=new FormData();
   form.append('metadata',new Blob([JSON.stringify(metadata)],{type:'application/json'}));
   form.append('file',file);
   const res=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',{
-    method:'POST',headers:{Authorization:'Bearer '+token},body:form
+    method:'POST',
+    headers:{Authorization:'Bearer '+token},
+    body:form
   });
-  if(!res.ok) throw new Error('GDrive upload failed: '+res.status);
+  if(!res.ok){
+    const errText=await res.text();
+    console.error('GDrive error:', errText);
+    throw new Error('GDrive upload failed: '+res.status);
+  }
   const data=await res.json();
-  // Make file readable by link
+  // Make publicly readable via link
   await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`,{
     method:'POST',
     headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
     body:JSON.stringify({role:'reader',type:'anyone'})
-  }).catch(()=>{});
+  }).catch(e=>console.warn('Permission set failed:',e));
   return data;
 }
 
@@ -1575,6 +1810,76 @@ window.switchPage=page=>{
   document.getElementById('nav-'+page)?.classList.add('active');
   document.getElementById('bnav-'+page)?.classList.add('active');
   document.getElementById('topbar-title').textContent=PAGE_TITLES[page]||page;
+};
+
+// ── STAFF LIST ────────────────────────────────────────────
+window.showStaffList=type=>{
+  const statuses=Object.values(window._teamStatus||{});
+  const today=new Date().toISOString().slice(0,10);
+  let title='', list=[];
+  if(type==='total'){
+    title='✈️ 출장 중 직원';
+    list=statuses;
+  } else if(type==='safe'){
+    title='✅ 오늘 체크인 완료';
+    list=statuses.filter(s=>s.ts?.toDate&&s.ts.toDate().toISOString().slice(0,10)===today);
+  } else {
+    title='⏳ 오늘 미완료';
+    list=statuses.filter(s=>!(s.ts?.toDate&&s.ts.toDate().toISOString().slice(0,10)===today));
+  }
+  document.getElementById('staff-list-title').textContent=title+` (${list.length}명)`;
+  const body=document.getElementById('staff-list-body');
+  if(!list.length){
+    body.innerHTML='<div class="empty-state"><div class="ico">👤</div>해당 직원이 없습니다</div>';
+  } else {
+    body.innerHTML=list.map(s=>{
+      const t=s.ts?.toDate?s.ts.toDate().toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+      const init=(s.name||'?').slice(0,2);
+      const avHtml=s.photoURL?`<img src="${s.photoURL}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`:`${init}`;
+      const checkedToday=s.ts?.toDate&&s.ts.toDate().toISOString().slice(0,10)===today;
+      return `<div class="team-row">
+        <div class="t-av">${avHtml}</div>
+        <div class="t-info">
+          <div class="t-name">${s.name||'이름없음'}</div>
+          <div class="t-meta">${[s.team,s.role].filter(Boolean).join(' · ')}${s.location?' · '+s.location:''}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+          <span class="badge ${checkedToday?'b-green':'b-amber'}"><span class="bdot"></span>${checkedToday?'완료':'미완료'}</span>
+          <span style="font-size:10.5px;color:var(--muted2)">${t}</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  openModal('modal-staff-list');
+};
+
+// ── CHECKIN EDIT / DELETE ─────────────────────────────────
+window._checkinDocs={};  // store docs for edit
+
+window.editCheckin=async(docId)=>{
+  const snap=await getDoc(doc(db,'checkins',docId));
+  if(!snap.exists()) return;
+  const r=snap.data();
+  document.getElementById('ci-edit-id').value=docId;
+  document.getElementById('ci-edit-location').value=r.location||'';
+  document.getElementById('ci-edit-note').value=r.note||'';
+  openModal('modal-checkin-edit');
+};
+
+window.saveCheckinEdit=async()=>{
+  const docId=document.getElementById('ci-edit-id').value;
+  const location=document.getElementById('ci-edit-location').value.trim();
+  if(!location){showToast('위치를 입력해주세요');return;}
+  const note=document.getElementById('ci-edit-note').value.trim();
+  await setDoc(doc(db,'checkins',docId),{location,note},{merge:true});
+  closeModal('modal-checkin-edit');
+  showToast('✓ 체크인 수정됨');
+};
+
+window.deleteCheckin=async(docId)=>{
+  if(!confirm('이 체크인 기록을 삭제하시겠습니까?')) return;
+  await deleteDoc(doc(db,'checkins',docId));
+  showToast('삭제됨');
 };
 
 // ── MODAL ─────────────────────────────────────────────────
