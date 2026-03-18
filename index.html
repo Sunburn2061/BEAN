@@ -1346,36 +1346,49 @@ window.handlePlacePhotos=input=>{
 
 // ── RECEIPTS ─────────────────────────────────────────────
 window.saveReceipt=async()=>{
-  const shop=document.getElementById('r-shop').value.trim()||'영수증';
-  const amountRaw=document.getElementById('r-amount').value;
-  const amount=amountRaw?parseFloat(amountRaw):null;
-  // Only photo or shop/amount required — at least one must be provided
-  if(!window._pendingReceiptFile&&!document.getElementById('r-shop').value.trim()&&!amountRaw){
-    showToast('사진을 올리거나 상호명/금액을 입력해주세요');return;
+  const saveBtn = document.querySelector('#modal-receipt .btn-primary');
+  if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='저장 중...'; }
+
+  try {
+    const shop=document.getElementById('r-shop').value.trim()||'영수증';
+    const amountRaw=document.getElementById('r-amount').value;
+    const amount=amountRaw?parseFloat(amountRaw):null;
+
+    let photoURL=null;
+    if(window._pendingReceiptFile){
+      try {
+        const path=`receipts/${window._currentUser?.uid||'anon'}/${Date.now()}_${window._pendingReceiptFile.name}`;
+        const s=await uploadBytes(storageRef(storage,path),window._pendingReceiptFile);
+        photoURL=await getDownloadURL(s.ref);
+        if(window._gdriveToken) uploadToGDrive(window._pendingReceiptFile,window._gdriveToken).catch(console.warn);
+      } catch(uploadErr){
+        console.warn('Photo upload failed, saving without photo:', uploadErr);
+        // Continue saving without photo — don't block the user
+      }
+    }
+
+    await addDoc(collection(db,'receipts'),{
+      shop,amount,cat:document.getElementById('r-cat').value,
+      currency:document.getElementById('r-currency').value,
+      date:document.getElementById('r-date').value||new Date().toISOString().slice(0,10),
+      photoURL,uid:window._currentUser?.uid,
+      by:window._profile?.name||window._currentUser?.displayName,ts:serverTimestamp()
+    });
+
+    window._pendingReceiptFile=null;
+    document.getElementById('receipt-preview-img').style.display='none';
+    document.getElementById('receipt-upload-status').textContent='';
+    document.getElementById('receipt-drop-ico').textContent='📷';
+    document.getElementById('r-shop').value='';
+    document.getElementById('r-amount').value='';
+    closeModal('modal-receipt');
+    showToast('🧾 영수증 저장됨');
+  } catch(e){
+    console.error('saveReceipt error:', e);
+    showToast('❌ 저장 실패: ' + (e.message||'다시 시도해주세요'));
+  } finally {
+    if(saveBtn){ saveBtn.disabled=false; saveBtn.textContent='저장'; }
   }
-  let photoURL=null;
-  if(window._pendingReceiptFile){
-    const path=`receipts/${window._currentUser?.uid||'anon'}/${Date.now()}_${window._pendingReceiptFile.name}`;
-    const s=await uploadBytes(storageRef(storage,path),window._pendingReceiptFile);
-    photoURL=await getDownloadURL(s.ref);
-    // If GDrive connected, upload there too
-    if(window._gdriveToken) uploadToGDrive(window._pendingReceiptFile,window._gdriveToken).catch(console.warn);
-  }
-  await addDoc(collection(db,'receipts'),{
-    shop,amount,cat:document.getElementById('r-cat').value,
-    currency:document.getElementById('r-currency').value,
-    date:document.getElementById('r-date').value||new Date().toISOString().slice(0,10),
-    photoURL,uid:window._currentUser?.uid,
-    by:window._profile?.name||window._currentUser?.displayName,ts:serverTimestamp()
-  });
-  window._pendingReceiptFile=null;
-  document.getElementById('receipt-preview-img').style.display='none';
-  document.getElementById('receipt-upload-status').textContent='';
-  document.getElementById('receipt-drop-ico').textContent='📷';
-  document.getElementById('r-shop').value='';
-  document.getElementById('r-amount').value='';
-  closeModal('modal-receipt');
-  showToast('🧾 영수증 저장됨');
 };
 
 window.delReceipt=async id=>{
