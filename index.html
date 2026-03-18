@@ -1102,38 +1102,8 @@ window.openCheckinModal=type=>{
   openModal('modal-checkin');
 };
 
-window.submitCheckin=async()=>{
-  const type=document.getElementById('checkin-type').value;
-  const location=document.getElementById('ci-location').value.trim();
-  const note=document.getElementById('ci-note').value.trim();
-  if(!location){showToast('위치를 입력해주세요');return;}
-  const user=window._currentUser;
-  const trip=window._myTrip;
-  const ciLat=parseFloat(document.getElementById('ci-lat').value)||null;
-  const ciLng=parseFloat(document.getElementById('ci-lng').value)||null;
-  await addDoc(collection(db,'checkins'),{
-    uid:user.uid,name:window._profile?.name||user.displayName,
-    team:window._profile?.team||'',role:window._profile?.role||'',
-    email:user.email,type,location,note,lat:ciLat,lng:ciLng,
-    country:trip?.country||'',city:trip?.city||'',ts:serverTimestamp()
-  });
-  await setDoc(doc(db,'team_status',user.uid),{
-    name:window._profile?.name||user.displayName,
-    team:window._profile?.team||'',role:window._profile?.role||'',
-    email:user.email,photoURL:user.photoURL||null,
-    location,lat:ciLat,lng:ciLng,
-    country:trip?.country||'',city:trip?.city||'',
-    status:type==='arrive'?'safe':'returned',ts:serverTimestamp()
-  });
-  document.getElementById('ci-location').value='';
-  document.getElementById('ci-note').value='';
-  document.getElementById('ci-lat').value='';
-  document.getElementById('ci-lng').value='';
-  closeModal('modal-checkin');
-  showToast(type==='arrive'?'✓ 현지 도착 체크인 완료!':'✓ 귀국 완료 체크인!');
-  // Refresh map
-  if(window._map) refreshMapMarkers();
-};
+// submitCheckin defined below with trip selection
+
 
 // ── SOS ───────────────────────────────────────────────────
 window.doSOS=async()=>{
@@ -1219,7 +1189,7 @@ function startListeners() {
 
   // My checkin history
   try {
-    onSnapshot(query(collection(db,'checkins'),where('uid','==',user.uid),orderBy('ts','desc')),snap=>{
+    onSnapshot(query(collection(db,'checkins'),where('uid','==',user.uid),orderBy('ts','desc')),{includeMetadataChanges:false},snap=>{
       const hist=document.getElementById('checkin-history');
       if(snap.empty){hist.innerHTML='<div class="empty-state"><div class="ico">🛡️</div>체크인 후 기록이 표시됩니다</div>';return;}
       hist.innerHTML=snap.docs.slice(0,10).map(d=>{
@@ -1246,7 +1216,7 @@ function startListeners() {
 
   // Places
   try {
-    onSnapshot(query(collection(db,'places'),orderBy('ts','desc')),snap=>{
+    onSnapshot(query(collection(db,'places'),orderBy('ts','desc')),{includeMetadataChanges:false},snap=>{
       window._places=snap.docs.map(d=>({id:d.id,...d.data()}));
       filterPlaces();
       if(window._map) refreshMapMarkers();
@@ -1255,14 +1225,14 @@ function startListeners() {
 
   // Receipts
   try {
-    onSnapshot(query(collection(db,'receipts'),where('uid','==',user.uid),orderBy('ts','desc')),snap=>{
+    onSnapshot(query(collection(db,'receipts'),where('uid','==',user.uid),orderBy('ts','desc')),{includeMetadataChanges:false},snap=>{
       window._receipts=snap.docs.map(d=>({id:d.id,...d.data()}));
       renderReceipts();
     });
   } catch(e){ console.warn(e); }
 
   // Team status
-  onSnapshot(collection(db,'team_status'),snap=>{
+  onSnapshot(collection(db,'team_status'),{includeMetadataChanges:false},snap=>{
     window._teamStatus={};
     snap.docs.forEach(d=>{window._teamStatus[d.id]=d.data();});
     renderTeamStats();
@@ -1643,16 +1613,19 @@ window.loadDriveFolders=async()=>{
 window.createDriveFolder=async()=>{
   const name=document.getElementById('new-folder-name').value.trim();
   if(!name){ showToast('폴더 이름을 입력해주세요'); return; }
+  const token=window._gdriveToken;
+  if(!token){ showToast('드라이브를 먼저 연결해주세요'); return; }
   try {
-    const res=await fetch('https://www.googleapis.com/drive/v3/files',{
+    const res=await fetch('https://www.googleapis.com/drive/v3/files?fields=id,name',{
       method:'POST',
-      headers:{Authorization:'Bearer '+window._gdriveToken,'Content-Type':'application/json'},
-      body:JSON.stringify({name,mimeType:'application/vnd.google-apps.folder'})
+      headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+      body:JSON.stringify({name,mimeType:'application/vnd.google-apps.folder',parents:['root']})
     });
+    if(!res.ok){ const e=await res.json(); throw new Error(e.error?.message||res.status); }
     const data=await res.json();
     selectDriveFolder(data.id, name);
-    showToast('✓ 폴더 생성됨: '+name);
-  } catch(e){ showToast('폴더 생성 실패'); }
+    showToast('✓ 폴더 생성됨! 내 드라이브에서 확인하세요 📁');
+  } catch(e){ showToast('폴더 생성 실패: '+e.message); console.error(e); }
 };
 
 window.selectDriveFolder=(folderId,folderName)=>{
@@ -1732,30 +1705,26 @@ function updateGDriveUI(connected){
 
 async function uploadToGDrive(file,token){
   const folderId=window._gdriveFolderId||null;
-  const metadata={
-    name:`BEAN_${new Date().toISOString().slice(0,10)}_${file.name}`,
-    parents: folderId ? [folderId] : ['root']
-  };
+  const fileName=`BEAN_${new Date().toISOString().slice(0,10)}_${file.name}`;
+  const metadata={name:fileName, parents:[folderId||'root']};
+  console.log('[GDrive] Uploading:', fileName, '→ folder:', folderId||'root(MyDrive)');
   const form=new FormData();
   form.append('metadata',new Blob([JSON.stringify(metadata)],{type:'application/json'}));
   form.append('file',file);
   const res=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',{
-    method:'POST',
-    headers:{Authorization:'Bearer '+token},
-    body:form
+    method:'POST',headers:{Authorization:'Bearer '+token},body:form
   });
   if(!res.ok){
-    const errText=await res.text();
-    console.error('GDrive error:', errText);
-    throw new Error('GDrive upload failed: '+res.status);
+    const errBody=await res.json().catch(()=>({}));
+    console.error('[GDrive] Upload failed:', errBody);
+    throw new Error('GDrive upload failed: '+res.status+' '+( errBody?.error?.message||''));
   }
   const data=await res.json();
-  // Make publicly readable via link
+  console.log('[GDrive] Upload success:', data);
   await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`,{
-    method:'POST',
-    headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+    method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
     body:JSON.stringify({role:'reader',type:'anyone'})
-  }).catch(e=>console.warn('Permission set failed:',e));
+  }).catch(e=>console.warn('[GDrive] Permission skipped:',e));
   return data;
 }
 
