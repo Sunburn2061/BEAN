@@ -272,6 +272,15 @@ textarea{resize:vertical;min-height:80px;}
 </head>
 <body>
 
+<!-- ══ SPLASH SCREEN ══ -->
+<div id="splash-screen" style="position:fixed;inset:0;background:#1E2761;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;transition:opacity .6s ease;">
+  <img src="/BEAN/icon-192x192.png" style="width:96px;height:96px;border-radius:24px;margin-bottom:24px;box-shadow:0 8px 32px rgba(0,0,0,.35)"/>
+  <div style="font-size:32px;font-weight:700;color:#FFC72C;letter-spacing:2px;font-family:'Noto Sans KR',sans-serif">BEAN</div>
+  <div style="font-size:15px;color:rgba(255,255,255,.85);margin-top:10px;font-style:italic;letter-spacing:.8px">I've BEAN there</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
 <div class="toast" id="toast"></div>
 
 <!-- PWA 홈 화면 추가 배너 -->
@@ -331,8 +340,17 @@ function copyBeanUrl(){
     el.select(); document.execCommand('copy');
     document.body.removeChild(el);
     alert('복사됨! Chrome/Safari에서 붙여넣기 해주세요.');
-  }
 }
+}
+// 스플래시 스크린
+(function(){
+  window.addEventListener('load',function(){
+    setTimeout(function(){
+      var s=document.getElementById('splash-screen');
+      if(s){s.style.opacity='0';setTimeout(function(){s.style.display='none';},600);}
+    },1800);
+  });
+})();
 </script>
 <div id="lightbox" onclick="closeLightbox()">
   <button id="lb-close" onclick="closeLightbox()">✕</button>
@@ -1969,6 +1987,21 @@ window.saveCheckinEdit=async()=>{
 window.deleteCheckin=async(docId)=>{
   if(!confirm('이 체크인 기록을 삭제하시겠습니까?')) return;
   await deleteDoc(doc(db,'checkins',docId));
+  const uid=window._currentUser.uid;
+  const remaining=await getDocs(query(collection(db,'checkins'),where('uid','==',uid),orderBy('ts','desc')));
+  if(remaining.empty){
+    await deleteDoc(doc(db,'team_status',uid));
+  } else {
+    const latest=remaining.docs[0].data();
+    await setDoc(doc(db,'team_status',uid),{
+      name:window._profile?.name||window._currentUser.displayName,
+      team:window._profile?.team||'',role:window._profile?.role||'',
+      email:window._currentUser.email,photoURL:window._currentUser.photoURL||null,
+      location:latest.location,lat:latest.lat||null,lng:latest.lng||null,
+      country:latest.country||'',city:latest.city||'',
+      status:latest.type==='arrive'?'safe':'returned',ts:latest.ts
+    });
+  }
   showToast('삭제됨');
 };
 
