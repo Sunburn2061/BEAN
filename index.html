@@ -281,8 +281,6 @@ textarea{resize:vertical;min-height:80px;}
 
 <div class="toast" id="toast"></div>
 
-<div class="toast" id="toast"></div>
-
 <!-- PWA 홈 화면 추가 배너 -->
 <div id="pwa-banner" style="display:none;position:fixed;bottom:80px;left:16px;right:16px;background:#1E2761;color:#fff;border-radius:14px;padding:14px 16px;z-index:400;box-shadow:0 8px 24px rgba(0,0,0,.25);align-items:center;gap:12px">
   <img src="/BEAN/icon-192x192.png" style="width:36px;height:36px;border-radius:8px;flex-shrink:0"/>
@@ -893,6 +891,20 @@ function copyBeanUrl(){
 </div>
 
 
+<script>
+// ── SECURITY: XSS 방지 HTML 이스케이프 ────────────────────
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+window.escapeHtml = escapeHtml;
+</script>
+
 <script type="module">
 import { initializeApp }  from 'https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, onAuthStateChanged }
@@ -918,6 +930,10 @@ const db=getFirestore(app);
 const provider=new GoogleAuthProvider();
 const ADMIN_EMAIL='hyeree.lee@bakelacorp.com';
 const SOS_PHONE='+82-2-511-1913';
+
+// ── LISTENER CLEANUP ──────────────────────────────────────
+// onSnapshot 구독 해제 함수들을 저장해 로그아웃 시 정리
+window._listeners = [];
 
 // ── AUTH ──────────────────────────────────────────────────
 onAuthStateChanged(auth, async user => {
@@ -971,7 +987,14 @@ document.getElementById('btn-google-login').addEventListener('click',async()=>{
   try{ await signInWithPopup(auth,provider); }
   catch(e){ alert('로그인 실패: '+e.message); }
 });
-document.getElementById('btn-signout').addEventListener('click',()=>fbSignOut(auth));
+document.getElementById('btn-signout').addEventListener('click',()=>{
+  // 리스너 정리
+  (window._listeners||[]).forEach(unsub => { try { unsub(); } catch(e){} });
+  window._listeners = [];
+  // 타이머 정리
+  if(window._tripStatusTimer){ clearInterval(window._tripStatusTimer); window._tripStatusTimer = null; }
+  fbSignOut(auth);
+});
 
 // ── PROFILE ───────────────────────────────────────────────
 window.saveProfile=async()=>{
@@ -1112,14 +1135,14 @@ function renderTripPage() {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
         <div>
           <div style="display:flex;align-items:center;gap:8px">
-            <div style="font-size:15px;font-weight:700">${t.country}${t.city?', '+t.city:''}</div>
+            <div style="font-size:15px;font-weight:700">${escapeHtml(t.country)}${t.city?', '+escapeHtml(t.city):''}</div>
             ${isCurrentTrip?'<span style="font-size:10px;background:var(--accent-light);color:var(--accent);padding:2px 7px;border-radius:20px;font-weight:600">현재 출장</span>':''}
           </div>
-          ${t.purpose?`<div style="font-size:12.5px;color:var(--muted);margin-top:2px">${t.purpose}</div>`:''}
+          ${t.purpose?`<div style="font-size:12.5px;color:var(--muted);margin-top:2px">${escapeHtml(t.purpose)}</div>`:''}
         </div>
         <span class="badge ${bclass}">${status}</span>
       </div>
-      <div style="font-size:12.5px;color:var(--muted)">📅 ${t.start} ~ ${t.end}</div>
+      <div style="font-size:12.5px;color:var(--muted)">📅 ${escapeHtml(t.start)} ~ ${escapeHtml(t.end)}</div>
       <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn btn-secondary btn-sm" onclick="openTripEdit('${t.id}')">✏️ 수정</button>
         <button class="btn btn-danger btn-sm" onclick="deleteTrip('${t.id}')">🗑 삭제</button>
@@ -1217,17 +1240,17 @@ async function renderTeamCheckins() {
       const s=d.data(); const uid=d.id;
       const checkedToday=s.ts?.toDate&&s.ts.toDate().toISOString().slice(0,10)===today;
       const t=s.ts?.toDate?s.ts.toDate().toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
-      const init=(s.name||'?').slice(0,2);
-      const avHtml=s.photoURL?`<img src="${s.photoURL}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`:`${init}`;
+      const init=escapeHtml((s.name||'?').slice(0,2));
+      const avHtml=s.photoURL?`<img src="${escapeHtml(s.photoURL)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`:`${init}`;
       const recentCi=ciByUser[uid]||[];
       const ciHistory=recentCi.map(ci=>{
         const ct=ci.ts?.toDate?ci.ts.toDate().toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
         const ico=ci.type==='arrive'?'📍':'🏠';
         return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--border)">
           <span style="font-size:12px">${ico}</span>
-          <span style="font-size:12px;flex:1">${ci.location||''}</span>
+          <span style="font-size:12px;flex:1">${escapeHtml(ci.location)}</span>
           <span style="font-size:10.5px;color:var(--muted2);font-family:'DM Mono',monospace">${ct}</span>
-          ${admin?`<button class="btn btn-secondary btn-xs" onclick="adminEditCheckin('${ci.id}','${(ci.location||'').replace(/'/g,"\'")}','${(ci.note||'').replace(/'/g,"\'")}')">✏️</button>
+          ${isAdmin()?`<button class="btn btn-secondary btn-xs" onclick="adminEditCheckin('${ci.id}','${(ci.location||'').replace(/'/g,"\\'").replace(/</g,'&lt;')}','${(ci.note||'').replace(/'/g,"\\'").replace(/</g,'&lt;')}')">✏️</button>
           <button class="btn btn-danger btn-xs" onclick="adminDeleteCheckin('${ci.id}')">🗑</button>`:''}
         </div>`;
       }).join('');
@@ -1235,8 +1258,8 @@ async function renderTeamCheckins() {
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:${recentCi.length?'10px':'0'}">
           <div class="t-av">${avHtml}</div>
           <div style="flex:1">
-            <div class="t-name">${s.name||'이름없음'}</div>
-            <div class="t-meta">${[s.team,s.role].filter(Boolean).join(' · ')}${s.location?' · '+s.location:''}</div>
+            <div class="t-name">${escapeHtml(s.name||'이름없음')}</div>
+            <div class="t-meta">${escapeHtml([s.team,s.role].filter(Boolean).join(' · '))}${s.location?' · '+escapeHtml(s.location):''}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
             <span class="badge ${checkedToday?'b-green':'b-amber'}"><span class="bdot"></span>${checkedToday?'체크인':'미완료'}</span>
@@ -1265,11 +1288,11 @@ async function renderTeamTrips() {
       return `<div class="card" style="margin-bottom:10px;padding:14px 16px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
           <div style="flex:1">
-            <div style="font-size:14px;font-weight:700">${t.name||'이름없음'}</div>
+            <div style="font-size:14px;font-weight:700">${escapeHtml(t.name||'이름없음')}</div>
             <div style="font-size:12.5px;color:var(--muted);margin-top:2px">
-              ${t.country}${t.city?', '+t.city:''}
+              ${escapeHtml(t.country)}${t.city?', '+escapeHtml(t.city):''}
             </div>
-            ${t.purpose?`<div style="font-size:11.5px;color:var(--muted2);margin-top:2px">${t.purpose}</div>`:''}
+            ${t.purpose?`<div style="font-size:11.5px;color:var(--muted2);margin-top:2px">${escapeHtml(t.purpose)}</div>`:''}
             <div style="font-size:11.5px;color:var(--muted);margin-top:6px">📅 ${t.start} ~ ${t.end}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
@@ -1291,7 +1314,7 @@ function startListeners() {
 
   // My checkin history
   try {
-    onSnapshot(query(collection(db,'checkins'),where('uid','==',user.uid),orderBy('ts','desc')),{includeMetadataChanges:false},snap=>{
+    const unsub1 = onSnapshot(query(collection(db,'checkins'),where('uid','==',user.uid),orderBy('ts','desc')),{includeMetadataChanges:false},snap=>{
       const hist=document.getElementById('checkin-history');
       if(snap.empty){hist.innerHTML='<div class="empty-state"><div class="ico">🛡️</div>체크인 후 기록이 표시됩니다</div>';return;}
       hist.innerHTML=snap.docs.slice(0,10).map(d=>{
@@ -1303,8 +1326,8 @@ function startListeners() {
         return `<div class="hist-item">
           <div class="hist-ico ${r.type==='arrive'?'':'green'}">${ico}</div>
           <div class="hist-body">
-            <div class="hist-title">${title} — ${r.location||''}</div>
-            <div class="hist-meta">${r.note||''}</div>
+            <div class="hist-title">${title} — ${escapeHtml(r.location)}</div>
+            <div class="hist-meta">${escapeHtml(r.note)}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
             <div class="hist-time">${t}</div>
@@ -1316,35 +1339,39 @@ function startListeners() {
         </div>`;
       }).join('');
     });
+    window._listeners.push(unsub1);
   } catch(e){ console.warn(e); }
 
   // Places
   try {
-    onSnapshot(query(collection(db,'places'),orderBy('ts','desc')),{includeMetadataChanges:false},snap=>{
+    const unsub2 = onSnapshot(query(collection(db,'places'),orderBy('ts','desc')),{includeMetadataChanges:false},snap=>{
       window._places=snap.docs.map(d=>({id:d.id,...d.data()}));
       filterPlaces();
       if(window._map) refreshMapMarkers();
     });
+    window._listeners.push(unsub2);
   } catch(e){ console.warn(e); }
 
   // Receipts
   try {
-    onSnapshot(query(collection(db,'receipts'),where('uid','==',user.uid),orderBy('ts','desc')),{includeMetadataChanges:false},snap=>{
+    const unsub3 = onSnapshot(query(collection(db,'receipts'),where('uid','==',user.uid),orderBy('ts','desc')),{includeMetadataChanges:false},snap=>{
       window._receipts=snap.docs.map(d=>({id:d.id,...d.data()}));
       renderReceipts();
     });
+    window._listeners.push(unsub3);
   } catch(e){ console.warn(e); }
 
   // Team status
-  onSnapshot(collection(db,'team_status'),{includeMetadataChanges:false},snap=>{
+  const unsub4 = onSnapshot(collection(db,'team_status'),{includeMetadataChanges:false},snap=>{
     window._teamStatus={};
     snap.docs.forEach(d=>{window._teamStatus[d.id]=d.data();});
     renderTeamStats();
     if(window._map) refreshMapMarkers();
   });
+  window._listeners.push(unsub4);
 
-  // Check missed checkins periodically
-  checkMissedCheckins();
+  // checkMissedCheckins는 Cloud Function으로 이관 권장
+  // 클라이언트에서는 호출하지 않음 (Firestore 읽기 비용 절감)
 }
 
 // ── TEAM STATS ────────────────────────────────────────────
@@ -1383,24 +1410,23 @@ function renderPlaces(list) {
   const catClass=c=>c==='카페'?'cafe':c==='숙소'?'hotel':c==='병원'?'hospital':c==='마트'?'mart':'';
   el.innerHTML=list.map(p=>{
     const stars='⭐'.repeat(p.rating||0);
-    const tagsHtml=(p.tags||[]).map(t=>`<span class="pc-tag">${t}</span>`).join('');
-    const photoHtml=(p.photos||[]).map(u=>`<img class="pc-photo" src="${u}" onclick="openLightbox('${u}')" alt=""/>`).join('');
+    const tagsHtml=(p.tags||[]).map(t=>`<span class="pc-tag">${escapeHtml(t)}</span>`).join('');
+    const photoHtml=(p.photos||[]).map(u=>`<img class="pc-photo" src="${escapeHtml(u)}" onclick="openLightbox('${escapeHtml(u)}')" alt=""/>`).join('');
     // Google Maps save link
     const mapsUrl=p.lat&&p.lng
       ?`https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`
-      :`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name+' '+p.city)}`;
-    // Save to Google Maps link (opens in user's Google Maps with save option)
+      :`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((p.name||'')+' '+(p.city||''))}`;
     const saveToMapsUrl=p.lat&&p.lng
       ?`https://maps.google.com/maps?q=${p.lat},${p.lng}&ll=${p.lat},${p.lng}&z=17`
-      :`https://maps.google.com/maps?q=${encodeURIComponent(p.name+' '+p.city)}`;
+      :`https://maps.google.com/maps?q=${encodeURIComponent((p.name||'')+' '+(p.city||''))}`;
     const byMe=window._currentUser&&(p.uid===window._currentUser.uid||!p.uid);
     return `<div class="place-card">
       <div class="pc-top">
         <div style="flex:1">
-          <div class="pc-name">${p.name}</div>
-          <div class="pc-city">📍 ${p.city}</div>
+          <div class="pc-name">${escapeHtml(p.name)}</div>
+          <div class="pc-city">📍 ${escapeHtml(p.city)}</div>
           <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-            <span class="pc-cat ${catClass(p.cat)}">${p.cat||'기타'}</span>
+            <span class="pc-cat ${catClass(p.cat)}">${escapeHtml(p.cat||'기타')}</span>
             <span class="pc-stars">${stars}</span>
           </div>
         </div>
@@ -1409,9 +1435,9 @@ function renderPlaces(list) {
           ${byMe?`<div style="display:flex;gap:4px"><button class="btn btn-secondary btn-xs" onclick="editPlace('${p.id}')">✏️</button><button class="btn btn-danger btn-xs" onclick="delPlace('${p.id}')">삭제</button></div>`:''}
         </div>
       </div>
-      ${p.notes?`<div class="pc-note">${p.notes}</div>`:''}
+      ${p.notes?`<div class="pc-note">${escapeHtml(p.notes)}</div>`:''}
       ${tagsHtml?`<div class="pc-tags">${tagsHtml}</div>`:''}
-      <div class="pc-by">👤 ${p.by||'익명'} 공유</div>
+      <div class="pc-by">👤 ${escapeHtml(p.by||'익명')} 공유</div>
       ${photoHtml?`<div class="pc-photos">${photoHtml}</div>`:''}
     </div>`;
   }).join('');
@@ -1443,7 +1469,9 @@ window.savePlace=async()=>{
     if(window._gdriveToken){
       try {
         const driveFile=await uploadToGDrive(file,window._gdriveToken);
-        if(driveFile?.webViewLink) photoURLs.push(driveFile.webViewLink);
+        // thumbnailLink로 인라인 표시, webViewLink는 클릭해서 열기용
+        if(driveFile?.thumbnailLink) photoURLs.push(driveFile.thumbnailLink);
+        else if(driveFile?.webViewLink) photoURLs.push(driveFile.webViewLink);
       } catch(e){ console.warn('GDrive place photo failed:',e); }
     }
     // No storage used — photos only go to GDrive
@@ -1522,7 +1550,8 @@ window.saveReceipt=async()=>{
         try {
           showToast('📁 드라이브에 업로드 중...');
           const driveFile=await uploadToGDrive(window._pendingReceiptFile, token);
-          photoURL=driveFile?.webViewLink||null;
+          // thumbnailLink는 img src로 직접 사용 가능, webViewLink는 클릭용
+          photoURL=driveFile?.thumbnailLink||driveFile?.webViewLink||null;
           showToast('✓ 드라이브 저장 완료!');
         } catch(e){
           console.error('GDrive upload failed:',e);
@@ -1611,7 +1640,7 @@ function renderReceipts() {
   document.getElementById('r-total').textContent=total?total.toLocaleString()+' '+currency:'—';
   document.getElementById('receipts-list').innerHTML=receipts.map(r=>{
     const thumbHtml=r.hasDrivePhoto&&r.photoURL
-      ?`<a href="${r.photoURL}" target="_blank" style="width:44px;height:44px;border-radius:8px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#E8F0FE;text-decoration:none;border:1px solid #C5D9F7;gap:1px" title="구글 드라이브에서 보기">
+      ?`<a href="${escapeHtml(r.photoURL)}" target="_blank" style="width:44px;height:44px;border-radius:8px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#E8F0FE;text-decoration:none;border:1px solid #C5D9F7;gap:1px" title="구글 드라이브에서 보기">
           <span style="font-size:18px">📁</span>
           <span style="font-size:9px;color:#1967D2;font-weight:600">Drive</span>
         </a>`
@@ -1619,11 +1648,11 @@ function renderReceipts() {
     return `<div class="receipt-item">
       ${thumbHtml}
       <div class="ri-info">
-        <div class="ri-shop">${r.shop||'—'}</div>
-        <div class="ri-meta">${r.date||''} · <span class="badge b-gray" style="font-size:10.5px;padding:1px 6px">${r.cat||'기타'}</span></div>
+        <div class="ri-shop">${escapeHtml(r.shop||'—')}</div>
+        <div class="ri-meta">${escapeHtml(r.date||'')} · <span class="badge b-gray" style="font-size:10.5px;padding:1px 6px">${escapeHtml(r.cat||'기타')}</span></div>
       </div>
       <div class="ri-right">
-        ${r.amount?`<div class="ri-amount">${r.amount.toLocaleString()}</div><div class="ri-currency">${r.currency||'KRW'}</div>`:'<div class="ri-currency">금액없음</div>'}
+        ${r.amount?`<div class="ri-amount">${r.amount.toLocaleString()}</div><div class="ri-currency">${escapeHtml(r.currency||'KRW')}</div>`:'<div class="ri-currency">금액없음</div>'}
         <button class="btn btn-danger btn-xs" onclick="delReceipt('${r.id}')">삭제</button>
       </div>
     </div>`;
@@ -1635,7 +1664,7 @@ function renderReceipts() {
 // Token expires in 1hr — we store expiry and auto-refresh on demand
 
 async function getValidGDriveToken(){
-  const expiry = parseInt(localStorage.getItem('gdrive_token_expiry')||'0');
+  const expiry = parseInt(sessionStorage.getItem('gdrive_token_expiry')||'0');
   const now = Date.now();
   // If token valid for >5 more minutes, reuse it
   if(window._gdriveToken && expiry > now + 5*60*1000){
@@ -1644,7 +1673,7 @@ async function getValidGDriveToken(){
   // Token expired or missing — silent re-auth
   try {
     const silentProvider = new GoogleAuthProvider();
-    silentProvider.addScope('https://www.googleapis.com/auth/drive');
+    silentProvider.addScope('https://www.googleapis.com/auth/drive.file');
     // Try silent with current user first
     if(window._currentUser){
       silentProvider.setCustomParameters({login_hint: window._currentUser.email, prompt:'none'});
@@ -1654,9 +1683,8 @@ async function getValidGDriveToken(){
     const token = credential?.accessToken;
     if(token){
       window._gdriveToken = token;
-      // Store with 55min expiry (token lasts 60min)
-      localStorage.setItem('gdrive_token', token);
-      localStorage.setItem('gdrive_token_expiry', String(Date.now() + 55*60*1000));
+      // 토큰은 sessionStorage에만 저장 (탭 닫으면 소멸, XSS 피해 최소화)
+      sessionStorage.setItem('gdrive_token_expiry', String(Date.now() + 55*60*1000));
       return token;
     }
   } catch(e){
@@ -1676,15 +1704,16 @@ window.startDriveConnect=async()=>{
 
 window.connectGDrive=async()=>{
   const p = new GoogleAuthProvider();
-  p.addScope('https://www.googleapis.com/auth/drive');
+  // drive.file 스코프: 앱이 만든 파일에만 접근 (drive 전체 권한보다 안전)
+  p.addScope('https://www.googleapis.com/auth/drive.file');
   try {
     const result=await signInWithPopup(auth, p);
     const credential=GoogleAuthProvider.credentialFromResult(result);
     const token=credential?.accessToken;
     if(token){
       window._gdriveToken=token;
-      localStorage.setItem('gdrive_token', token);
-      localStorage.setItem('gdrive_token_expiry', String(Date.now() + 55*60*1000));
+      // 토큰은 메모리 + sessionStorage만 (localStorage X)
+      sessionStorage.setItem('gdrive_token_expiry', String(Date.now() + 55*60*1000));
       updateGDriveUI(true);
       showToast('✓ 구글 드라이브 연결됨');
       setTimeout(()=>openModal('modal-gdrive-folder'), 500);
@@ -1754,33 +1783,32 @@ window.disconnectGDrive=()=>{
   window._gdriveToken=null;
   window._gdriveFolderId=null;
   window._gdriveFolderName=null;
-  ['gdrive_token','gdrive_token_expiry','gdrive_folder_id','gdrive_folder_name']
-    .forEach(k=>localStorage.removeItem(k));
+  ['gdrive_folder_id','gdrive_folder_name'].forEach(k=>localStorage.removeItem(k));
+  ['gdrive_token_expiry'].forEach(k=>sessionStorage.removeItem(k));
   updateGDriveUI(false);
   showToast('구글 드라이브 연결 해제됨');
 };
 
 function loadGDriveStatus(){
-  const token=localStorage.getItem('gdrive_token');
-  const expiry=parseInt(localStorage.getItem('gdrive_token_expiry')||'0');
+  // 토큰은 sessionStorage에만 (보안), 폴더 정보는 localStorage (편의)
+  const expiry=parseInt(sessionStorage.getItem('gdrive_token_expiry')||'0');
   const folderId=localStorage.getItem('gdrive_folder_id');
   const folderName=localStorage.getItem('gdrive_folder_name');
-  if(token && expiry > Date.now()){
-    window._gdriveToken=token;
+  if(window._gdriveToken && expiry > Date.now()){
     window._gdriveFolderId=folderId||null;
     window._gdriveFolderName=folderName||null;
     updateGDriveUI(true);
-  } else if(token){
-    // Token stored but expired — keep folder info, clear token
+  } else {
+    // 토큰 없거나 만료 — 메모리 초기화
     window._gdriveToken=null;
     window._gdriveFolderId=folderId||null;
     window._gdriveFolderName=folderName||null;
-    localStorage.removeItem('gdrive_token');
-    localStorage.removeItem('gdrive_token_expiry');
+    sessionStorage.removeItem('gdrive_token_expiry');
     updateGDriveUI(false);
-    // Show reconnect hint
-    setTimeout(()=>showToast('🔄 구글 드라이브 재연결이 필요합니다'),1500);
-  } else { updateGDriveUI(false); }
+    if(folderId){
+      setTimeout(()=>showToast('🔄 구글 드라이브 재연결이 필요합니다'),1500);
+    }
+  }
 }
 
 function updateGDriveUI(connected){
@@ -1823,7 +1851,7 @@ async function uploadToGDrive(file,token){
   const form=new FormData();
   form.append('metadata',new Blob([JSON.stringify(metadata)],{type:'application/json'}));
   form.append('file',file);
-  const res=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',{
+  const res=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,thumbnailLink,webContentLink',{
     method:'POST',headers:{Authorization:'Bearer '+token},body:form
   });
   if(!res.ok){
@@ -1942,14 +1970,14 @@ window.showStaffList=type=>{
   } else {
     body.innerHTML=list.map(s=>{
       const t=s.ts?.toDate?s.ts.toDate().toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
-      const init=(s.name||'?').slice(0,2);
-      const avHtml=s.photoURL?`<img src="${s.photoURL}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`:`${init}`;
+      const init=escapeHtml((s.name||'?').slice(0,2));
+      const avHtml=s.photoURL?`<img src="${escapeHtml(s.photoURL)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`:`${init}`;
       const checkedToday=s.ts?.toDate&&s.ts.toDate().toISOString().slice(0,10)===today;
       return `<div class="team-row">
         <div class="t-av">${avHtml}</div>
         <div class="t-info">
-          <div class="t-name">${s.name||'이름없음'}</div>
-          <div class="t-meta">${[s.team,s.role].filter(Boolean).join(' · ')}${s.location?' · '+s.location:''}</div>
+          <div class="t-name">${escapeHtml(s.name||'이름없음')}</div>
+          <div class="t-meta">${escapeHtml([s.team,s.role].filter(Boolean).join(' · '))}${s.location?' · '+escapeHtml(s.location):''}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
           <span class="badge ${checkedToday?'b-green':'b-amber'}"><span class="bdot"></span>${checkedToday?'완료':'미완료'}</span>
@@ -1986,23 +2014,28 @@ window.saveCheckinEdit=async()=>{
 
 window.deleteCheckin=async(docId)=>{
   if(!confirm('이 체크인 기록을 삭제하시겠습니까?')) return;
-  await deleteDoc(doc(db,'checkins',docId));
-  const uid=window._currentUser.uid;
-  const remaining=await getDocs(query(collection(db,'checkins'),where('uid','==',uid),orderBy('ts','desc')));
-  if(remaining.empty){
-    await deleteDoc(doc(db,'team_status',uid));
-  } else {
-    const latest=remaining.docs[0].data();
-    await setDoc(doc(db,'team_status',uid),{
-      name:window._profile?.name||window._currentUser.displayName,
-      team:window._profile?.team||'',role:window._profile?.role||'',
-      email:window._currentUser.email,photoURL:window._currentUser.photoURL||null,
-      location:latest.location,lat:latest.lat||null,lng:latest.lng||null,
-      country:latest.country||'',city:latest.city||'',
-      status:latest.type==='arrive'?'safe':'returned',ts:latest.ts
-    });
+  try {
+    await deleteDoc(doc(db,'checkins',docId));
+    const uid=window._currentUser.uid;
+    const remaining=await getDocs(query(collection(db,'checkins'),where('uid','==',uid),orderBy('ts','desc')));
+    if(remaining.empty){
+      await deleteDoc(doc(db,'team_status',uid));
+    } else {
+      const latest=remaining.docs[0].data();
+      await setDoc(doc(db,'team_status',uid),{
+        name:window._profile?.name||window._currentUser.displayName,
+        team:window._profile?.team||'',role:window._profile?.role||'',
+        email:window._currentUser.email,photoURL:window._currentUser.photoURL||null,
+        location:latest.location,lat:latest.lat||null,lng:latest.lng||null,
+        country:latest.country||'',city:latest.city||'',
+        status:latest.type==='arrive'?'safe':'returned',ts:latest.ts
+      });
+    }
+    showToast('삭제됨');
+  } catch(e) {
+    console.error('deleteCheckin error:', e);
+    showToast('❌ 삭제 실패: ' + (e.message||'다시 시도해주세요'));
   }
-  showToast('삭제됨');
 };
 
 
@@ -2165,28 +2198,33 @@ window.submitCheckin=async()=>{
   const trip=window._checkinSelectedTrip||window._myTrip;
   const ciLat=parseFloat(document.getElementById('ci-lat').value)||null;
   const ciLng=parseFloat(document.getElementById('ci-lng').value)||null;
-  await addDoc(collection(db,'checkins'),{
-    uid:user.uid,name:window._profile?.name||user.displayName,
-    team:window._profile?.team||'',role:window._profile?.role||'',
-    email:user.email,type,location,note,lat:ciLat,lng:ciLng,
-    tripId:trip?.id||null,
-    country:trip?.country||'',city:trip?.city||'',ts:serverTimestamp()
-  });
-  await setDoc(doc(db,'team_status',user.uid),{
-    name:window._profile?.name||user.displayName,
-    team:window._profile?.team||'',role:window._profile?.role||'',
-    email:user.email,photoURL:user.photoURL||null,
-    location,lat:ciLat,lng:ciLng,
-    country:trip?.country||'',city:trip?.city||'',
-    status:type==='arrive'?'safe':'returned',ts:serverTimestamp()
-  });
-  document.getElementById('ci-location').value='';
-  document.getElementById('ci-note').value='';
-  document.getElementById('ci-lat').value='';
-  document.getElementById('ci-lng').value='';
-  closeModal('modal-checkin');
-  showToast(type==='arrive'?'✓ 현지 도착 체크인 완료!':'✓ 귀국 완료 체크인!');
-  if(window._map) refreshMapMarkers();
+  try {
+    await addDoc(collection(db,'checkins'),{
+      uid:user.uid,name:window._profile?.name||user.displayName,
+      team:window._profile?.team||'',role:window._profile?.role||'',
+      email:user.email,type,location,note,lat:ciLat,lng:ciLng,
+      tripId:trip?.id||null,
+      country:trip?.country||'',city:trip?.city||'',ts:serverTimestamp()
+    });
+    await setDoc(doc(db,'team_status',user.uid),{
+      name:window._profile?.name||user.displayName,
+      team:window._profile?.team||'',role:window._profile?.role||'',
+      email:user.email,photoURL:user.photoURL||null,
+      location,lat:ciLat,lng:ciLng,
+      country:trip?.country||'',city:trip?.city||'',
+      status:type==='arrive'?'safe':'returned',ts:serverTimestamp()
+    });
+    document.getElementById('ci-location').value='';
+    document.getElementById('ci-note').value='';
+    document.getElementById('ci-lat').value='';
+    document.getElementById('ci-lng').value='';
+    closeModal('modal-checkin');
+    showToast(type==='arrive'?'✓ 현지 도착 체크인 완료!':'✓ 귀국 완료 체크인!');
+    if(window._map) refreshMapMarkers();
+  } catch(e){
+    console.error('submitCheckin error:', e);
+    showToast('❌ 체크인 저장 실패: ' + (e.message||'다시 시도해주세요'));
+  }
 };
 </script>
 
@@ -2318,9 +2356,9 @@ window.refreshMapMarkers=function(){
     });
     const iw=new google.maps.InfoWindow({
       content:`<div style="font-family:'Noto Sans KR',sans-serif;padding:6px 2px;min-width:150px">
-        <div style="font-weight:700;font-size:13px;color:#DC2626">📍 ${s.name||'이름없음'}</div>
-        <div style="color:#6B7280;font-size:11.5px;margin-top:2px">${[s.team,s.role].filter(Boolean).join(' · ')}</div>
-        <div style="color:#374151;font-size:12px;margin-top:4px">${s.location||s.country||''}</div>
+        <div style="font-weight:700;font-size:13px;color:#DC2626">📍 ${escapeHtml(s.name||'이름없음')}</div>
+        <div style="color:#6B7280;font-size:11.5px;margin-top:2px">${escapeHtml([s.team,s.role].filter(Boolean).join(' · '))}</div>
+        <div style="color:#374151;font-size:12px;margin-top:4px">${escapeHtml(s.location||s.country||'')}</div>
         <div style="color:#9CA3AF;font-size:10.5px;margin-top:2px">${s.status==='safe'?'✅ 현지 도착':'🏠 귀국 완료'}</div>
       </div>`
     });
@@ -2344,11 +2382,11 @@ window.refreshMapMarkers=function(){
     });
     const iw=new google.maps.InfoWindow({
       content:`<div style="font-family:'Noto Sans KR',sans-serif;padding:6px 2px;min-width:160px">
-        <div style="font-weight:700;font-size:13px">${p.name}</div>
-        <div style="color:#6B7280;font-size:11.5px;margin-top:2px">📍 ${p.city} · ${p.cat||''}</div>
+        <div style="font-weight:700;font-size:13px">${escapeHtml(p.name)}</div>
+        <div style="color:#6B7280;font-size:11.5px;margin-top:2px">📍 ${escapeHtml(p.city)} · ${escapeHtml(p.cat||'')}</div>
         <div style="font-size:11.5px;margin-top:2px">${'⭐'.repeat(p.rating||0)}</div>
-        ${p.notes?`<div style="color:#374151;font-size:11.5px;margin-top:4px">${p.notes.slice(0,60)}${p.notes.length>60?'...':''}</div>`:''}
-        <div style="color:#9CA3AF;font-size:10.5px;margin-top:4px">by ${p.by||'익명'}</div>
+        ${p.notes?`<div style="color:#374151;font-size:11.5px;margin-top:4px">${escapeHtml(p.notes.slice(0,60))}${p.notes.length>60?'...':''}</div>`:''}
+        <div style="color:#9CA3AF;font-size:10.5px;margin-top:4px">by ${escapeHtml(p.by||'익명')}</div>
       </div>`
     });
     marker.addListener('click',()=>iw.open(window._map,marker));
