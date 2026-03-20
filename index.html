@@ -967,6 +967,45 @@ function showApp(user) {
   document.getElementById('pe-team').value=window._profile?.team||'';
   document.getElementById('pe-role').value=window._profile?.role||'';
   loadGDriveStatus();
+  // 3일 지난 내 체크인 자동 삭제
+  autoCleanOldCheckins(user.uid);
+}
+
+// ── AUTO CLEAN: 3일 지난 체크인 자동 삭제 ─────────────────
+async function autoCleanOldCheckins(uid) {
+  try {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 3);
+    const cutoffTs = Timestamp.fromDate(cutoff);
+    const snap = await getDocs(query(
+      collection(db,'checkins'),
+      where('uid','==',uid),
+      where('ts','<',cutoffTs)
+    ));
+    if(snap.empty) return;
+    for(const d of snap.docs){
+      await deleteDoc(doc(db,'checkins',d.id));
+    }
+    // team_status도 최신 기록 기준으로 갱신
+    const remaining = await getDocs(query(
+      collection(db,'checkins'),
+      where('uid','==',uid),
+      orderBy('ts','desc')
+    ));
+    if(remaining.empty){
+      await deleteDoc(doc(db,'team_status',uid));
+    } else {
+      const latest = remaining.docs[0].data();
+      await setDoc(doc(db,'team_status',uid),{
+        name:window._profile?.name||window._currentUser.displayName,
+        team:window._profile?.team||'',role:window._profile?.role||'',
+        email:window._currentUser.email,photoURL:window._currentUser.photoURL||null,
+        location:latest.location,lat:latest.lat||null,lng:latest.lng||null,
+        country:latest.country||'',city:latest.city||'',
+        status:latest.type==='arrive'?'safe':'returned',ts:latest.ts
+      });
+    }
+  } catch(e){ console.warn('autoCleanOldCheckins:', e); }
 }
 
 function updateUserUI(user) {
@@ -1222,22 +1261,33 @@ window.switchCheckinTab=tab=>{
 async function renderTeamCheckins() {
   const el=document.getElementById('team-checkin-list');
   try {
-    // Load all latest checkins per user (from team_status) + recent checkin docs
     const [statusSnap, ciSnap] = await Promise.all([
       getDocs(collection(db,'team_status')),
       getDocs(query(collection(db,'checkins'), orderBy('ts','desc')))
     ]);
     if(statusSnap.empty){el.innerHTML='<div class="empty-state"><div class="ico">👥</div>팀원 체크인 정보가 없습니다</div>';return;}
     const today=new Date().toISOString().slice(0,10);
-    const admin=isAdmin();
-    // Group checkins by uid for recent history
+    const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-3);
+    const myUid=window._currentUser?.uid;
+    // 3일 이내 기록만 표시
     const ciByUser={};
     ciSnap.docs.forEach(d=>{
-      const r=d.data(); if(!ciByUser[r.uid]) ciByUser[r.uid]=[];
+      const r=d.data();
+      const tsDate=r.ts?.toDate?r.ts.toDate():null;
+      if(!tsDate||tsDate<cutoff) return; // 3일 지난 기록 제외
+      if(!ciByUser[r.uid]) ciByUser[r.uid]=[];
       if(ciByUser[r.uid].length<3) ciByUser[r.uid].push({id:d.id,...r});
     });
-    el.innerHTML=statusSnap.docs.map(d=>{
+    // team_status도 3일 이내 것만 표시
+    const validDocs=statusSnap.docs.filter(d=>{
+      const s=d.data();
+      const tsDate=s.ts?.toDate?s.ts.toDate():null;
+      return tsDate&&tsDate>=cutoff;
+    });
+    if(!validDocs.length){el.innerHTML='<div class="empty-state"><div class="ico">👥</div>최근 3일간 체크인 기록이 없습니다</div>';return;}
+    el.innerHTML=validDocs.map(d=>{
       const s=d.data(); const uid=d.id;
+      const isMe=uid===myUid;
       const checkedToday=s.ts?.toDate&&s.ts.toDate().toISOString().slice(0,10)===today;
       const t=s.ts?.toDate?s.ts.toDate().toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
       const init=escapeHtml((s.name||'?').slice(0,2));
@@ -1250,8 +1300,6 @@ async function renderTeamCheckins() {
           <span style="font-size:12px">${ico}</span>
           <span style="font-size:12px;flex:1">${escapeHtml(ci.location)}</span>
           <span style="font-size:10.5px;color:var(--muted2);font-family:'DM Mono',monospace">${ct}</span>
-          ${isAdmin()?`<button class="btn btn-secondary btn-xs" onclick="adminEditCheckin('${ci.id}','${(ci.location||'').replace(/'/g,"\\'").replace(/</g,'&lt;')}','${(ci.note||'').replace(/'/g,"\\'").replace(/</g,'&lt;')}')">✏️</button>
-          <button class="btn btn-danger btn-xs" onclick="adminDeleteCheckin('${ci.id}')">🗑</button>`:''}
         </div>`;
       }).join('');
       return `<div class="card" style="margin-bottom:10px;padding:14px 16px">
@@ -1285,6 +1333,7 @@ async function renderTeamTrips() {
       const sched=today<t.start;
       const status=active?'진행중':(sched?'예정':'완료');
       const bclass=active?'b-green':(sched?'b-amber':'b-gray');
+      const isMyTrip=t.uid===window._currentUser?.uid;
       return `<div class="card" style="margin-bottom:10px;padding:14px 16px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
           <div style="flex:1">
@@ -1297,9 +1346,9 @@ async function renderTeamTrips() {
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
             <span class="badge ${bclass}">${status}</span>
-            ${admin?`<div style="display:flex;gap:4px;margin-top:4px">
+            ${isMyTrip?`<div style="display:flex;gap:4px;margin-top:4px">
               <button class="btn btn-secondary btn-xs" onclick="adminEditTrip('${tripId}')">✏️ 수정</button>
-              <button class="btn btn-danger btn-xs" onclick="adminDeleteTrip('${tripId}','${(t.name||'').replace(/'/g,"\'")}')">🗑</button>
+              <button class="btn btn-danger btn-xs" onclick="adminDeleteTrip('${tripId}','${(t.name||'').replace(/'/g,"\\'")}')">🗑</button>
             </div>`:''}
           </div>
         </div>
@@ -1378,8 +1427,14 @@ function startListeners() {
 function renderTeamStats() {
   const statuses=Object.values(window._teamStatus||{});
   const today=new Date().toISOString().slice(0,10);
-  const total=statuses.length;
-  const safe=statuses.filter(s=>s.ts?.toDate&&s.ts.toDate().toISOString().slice(0,10)===today).length;
+  const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-3);
+  // 3일 이내 체크인만 카운트
+  const recent=statuses.filter(s=>{
+    const tsDate=s.ts?.toDate?s.ts.toDate():null;
+    return tsDate&&tsDate>=cutoff;
+  });
+  const total=recent.length;
+  const safe=recent.filter(s=>s.ts?.toDate&&s.ts.toDate().toISOString().slice(0,10)===today).length;
   document.getElementById('stat-total').textContent=total||'—';
   document.getElementById('stat-safe').textContent=safe||'—';
   document.getElementById('stat-over').textContent=total?(total-safe):'—';
@@ -1419,7 +1474,7 @@ function renderPlaces(list) {
     const saveToMapsUrl=p.lat&&p.lng
       ?`https://maps.google.com/maps?q=${p.lat},${p.lng}&ll=${p.lat},${p.lng}&z=17`
       :`https://maps.google.com/maps?q=${encodeURIComponent((p.name||'')+' '+(p.city||''))}`;
-    const byMe=window._currentUser&&(p.uid===window._currentUser.uid||!p.uid);
+    const byMe=!!(window._currentUser && p.uid && p.uid===window._currentUser.uid);
     return `<div class="place-card">
       <div class="pc-top">
         <div style="flex:1">
@@ -2327,36 +2382,64 @@ window.initMap=function(){
 
 window.refreshMapMarkers=function(){
   if(!window._map) return;
-  // Clear existing markers
   (window._mapMarkers||[]).forEach(m=>m.setMap(null));
   window._mapMarkers=[];
 
-  // Team member markers (red, prominent)
+  // 인물별 색상 팔레트
+  const COLORS=['#5B5BD6','#059669','#D97706','#DC2626','#7C3AED','#0891B2','#BE185D','#65A30D','#EA580C','#0284C7'];
+  // 동물 이모지 목록
+  const ANIMALS=['🐻','🐯','🦊','🐼','🐨','🦁','🐸','🐧','🦄','🐺','🦋','🐙','🦀','🐬','🦅'];
+  // uid → 색상/동물 고정 매핑 (같은 uid는 항상 같은 색+동물)
+  const uidList=Object.keys(window._teamStatus||{}).sort();
+  const getColor=uid=>{const i=uidList.indexOf(uid);return COLORS[i%COLORS.length];};
+  const getAnimal=uid=>{const i=uidList.indexOf(uid);return ANIMALS[i%ANIMALS.length];};
+
+  // 3일 기준
+  const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-3);
+
+  // 팀원 마커 (3일 이내만)
   const statuses=Object.values(window._teamStatus||{});
-  statuses.forEach(s=>{
+  statuses.forEach((s,idx)=>{
     if(!s.lat||!s.lng) return;
-    const marker=new google.maps.Marker({
-      position:{lat:s.lat,lng:s.lng},
-      map:window._map,
-      title:s.name,
-      label:{
-        text:s.name||'?',
-        color:'#ffffff',fontSize:'10px',fontWeight:'bold',
-        fontFamily:"'Noto Sans KR',sans-serif"
-      },
-      icon:{
-        path:google.maps.SymbolPath.CIRCLE,
-        scale:28,
-        fillColor:'#DC2626',
-        fillOpacity:1,
-        strokeColor:'#fff',
-        strokeWeight:2.5
-      },
-      zIndex:100
-    });
+    const tsDate=s.ts?.toDate?s.ts.toDate():null;
+    if(!tsDate||tsDate<cutoff) return; // 3일 지난 마커 제외
+    const uid=Object.keys(window._teamStatus||{})[Object.values(window._teamStatus||{}).indexOf(s)];
+    const color=getColor(uid);
+    const animal=getAnimal(uid);
+    // AdvancedMarkerElement 미지원 환경 대비 — 커스텀 HTML 오버레이로 동물 표시
+    const markerEl=document.createElement('div');
+    markerEl.style.cssText=`
+      width:44px;height:44px;border-radius:50%;
+      background:${color};border:2.5px solid #fff;
+      display:flex;align-items:center;justify-content:center;
+      font-size:22px;cursor:pointer;
+      box-shadow:0 2px 8px rgba(0,0,0,0.25);
+    `;
+    markerEl.textContent=animal;
+    // google.maps.marker.AdvancedMarkerElement 사용 (deprecation 경고 해소)
+    let marker;
+    try {
+      marker=new google.maps.marker.AdvancedMarkerElement({
+        position:{lat:s.lat,lng:s.lng},
+        map:window._map,
+        title:s.name||'',
+        content:markerEl,
+        zIndex:100
+      });
+    } catch(e){
+      // 폴백: 구형 Marker
+      marker=new google.maps.Marker({
+        position:{lat:s.lat,lng:s.lng},
+        map:window._map,
+        title:s.name||'',
+        label:{text:animal,color:'#fff',fontSize:'18px'},
+        icon:{path:google.maps.SymbolPath.CIRCLE,scale:22,fillColor:color,fillOpacity:1,strokeColor:'#fff',strokeWeight:2.5},
+        zIndex:100
+      });
+    }
     const iw=new google.maps.InfoWindow({
       content:`<div style="font-family:'Noto Sans KR',sans-serif;padding:6px 2px;min-width:150px">
-        <div style="font-weight:700;font-size:13px;color:#DC2626">📍 ${escapeHtml(s.name||'이름없음')}</div>
+        <div style="font-weight:700;font-size:13px;color:${color}">${animal} ${escapeHtml(s.name||'이름없음')}</div>
         <div style="color:#6B7280;font-size:11.5px;margin-top:2px">${escapeHtml([s.team,s.role].filter(Boolean).join(' · '))}</div>
         <div style="color:#374151;font-size:12px;margin-top:4px">${escapeHtml(s.location||s.country||'')}</div>
         <div style="color:#9CA3AF;font-size:10.5px;margin-top:2px">${s.status==='safe'?'✅ 현지 도착':'🏠 귀국 완료'}</div>
@@ -2403,7 +2486,7 @@ window.refreshMapMarkers=function(){
 };
 window._mapsApiLoaded=false;
 </script>
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD2ybdfiZgLBaQVnlnWDF2850hUC4YH60U&callback=initMap&loading=async" async defer></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD2ybdfiZgLBaQVnlnWDF2850hUC4YH60U&callback=initMap&libraries=marker&loading=async" async defer></script>
 
 
 </body>
