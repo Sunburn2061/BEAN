@@ -261,33 +261,10 @@ textarea{resize:vertical;min-height:80px;}
   .stats-row .stat-box:last-child{grid-column:span 2;}
 }
 </style>
-<link rel="manifest" id="pwa-manifest"/>
-<link rel="icon" id="pwa-favicon" type="image/png"/>
-<link rel="apple-touch-icon" id="pwa-apple-icon"/>
-<script>
-// Inject manifest as blob URL to avoid encoding issues
-(function(){
-  // Use the embedded logo as PWA icon
-  const logoEl = document.querySelector('.login-logo img') || document.querySelector('#sidebar-logo img');
-  const logoSrc = logoEl ? logoEl.src : '';
-  const manifest = {
-    name:"BEAN",short_name:"BEAN",
-    start_url:".",display:"standalone",
-    background_color:"#FFC72C",theme_color:"#1E2761",
-    icons: logoSrc ? [
-      {src:logoSrc,sizes:"192x192",type:"image/png",purpose:"any maskable"},
-      {src:logoSrc,sizes:"512x512",type:"image/png",purpose:"any maskable"}
-    ] : []
-  };
-  const blob = new Blob([JSON.stringify(manifest)],{type:'application/json'});
-  document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
-  // Set favicon
-  const faviconEl = document.getElementById('pwa-favicon');
-  const appleEl = document.getElementById('pwa-apple-icon');
-  if(faviconEl && logoSrc) faviconEl.href = logoSrc;
-  if(appleEl && logoSrc) appleEl.href = logoSrc;
-})();
-</script>
+<link rel="manifest" href="/BEAN/manifest.json"/>
+<link rel="icon" type="image/png" href="/BEAN/icon-192x192.png"/>
+<link rel="apple-touch-icon" href="/BEAN/icon-192x192.png"/>
+<!-- PWA icons configured via manifest.json -->
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
 <meta name="apple-mobile-web-app-title" content="BEAN"/>
@@ -299,7 +276,7 @@ textarea{resize:vertical;min-height:80px;}
 
 <!-- PWA 홈 화면 추가 배너 -->
 <div id="pwa-banner" style="display:none;position:fixed;bottom:80px;left:16px;right:16px;background:#1E2761;color:#fff;border-radius:14px;padding:14px 16px;z-index:400;box-shadow:0 8px 24px rgba(0,0,0,.25);align-items:center;gap:12px">
-  <img src="" id="pwa-banner-logo" style="width:36px;height:36px;border-radius:8px;flex-shrink:0"/>
+  <img src="/BEAN/icon-192x192.png" style="width:36px;height:36px;border-radius:8px;flex-shrink:0"/>
   <div style="flex:1">
     <div style="font-size:13px;font-weight:700">홈 화면에 추가하기</div>
     <div style="font-size:11.5px;opacity:.8;margin-top:2px">앱처럼 빠르게 접속할 수 있어요</div>
