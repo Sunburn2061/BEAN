@@ -1,0 +1,22 @@
+{
+  "name": "BEAN",
+  "short_name": "BEAN",
+  "start_url": "/BEAN/",
+  "display": "standalone",
+  "background_color": "#FFC72C",
+  "theme_color": "#1E2761",
+  "icons": [
+    {
+      "src": "/BEAN/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/BEAN/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
