@@ -1110,11 +1110,14 @@ async function loadMyTrips() {
   try {
     const snap=await getDocs(query(collection(db,'trips'),where('uid','==',window._currentUser.uid),orderBy('start','desc')));
     window._myTrips=snap.docs.map(d=>({id:d.id,...d.data()}));
-    // Active trip = today within range
+    // Active trip = today within range (string compare YYYY-MM-DD is safe for ISO dates)
     const today=new Date().toISOString().slice(0,10);
-    // Active trip first, then nearest upcoming, then most recent past
-    window._myTrip = window._myTrips.find(t=>today>=t.start&&today<=t.end)
-      || window._myTrips.find(t=>t.start>today)
+    // Active trip first (start <= today <= end), then nearest upcoming, then most recent past
+    const activeTrip = window._myTrips.find(t=>t.start<=today&&today<=t.end);
+    const upcomingTrip = window._myTrips
+      .filter(t=>t.start>today)
+      .sort((a,b)=>a.start.localeCompare(b.start))[0] || null;
+    window._myTrip = activeTrip || upcomingTrip
       || (window._myTrips.length>0 ? window._myTrips[0] : null);
     renderTripBanner();
     renderTripPage();
@@ -1136,7 +1139,7 @@ function renderTripBanner() {
   }
   document.getElementById('no-trip').classList.remove('show');
   const today=new Date().toISOString().slice(0,10);
-  const active=today>=t.start&&today<=t.end;
+  const active=t.start<=today&&today<=t.end;
   document.getElementById('tb-dest').textContent=`${t.country}${t.city?', '+t.city:''}`;
   document.getElementById('tb-dates').textContent=`${t.start} ~ ${t.end}`;
   const badge=document.getElementById('tb-status');
@@ -1165,7 +1168,7 @@ function renderTripPage() {
   }
   const today=new Date().toISOString().slice(0,10);
   el.innerHTML=trips.map(t=>{
-    const active=today>=t.start&&today<=t.end;
+    const active=t.start<=today&&today<=t.end;
     const sched=today<t.start;
     const status=active?'진행중':(sched?'예정':'완료');
     const bclass=active?'b-green':(sched?'b-amber':'b-gray');
